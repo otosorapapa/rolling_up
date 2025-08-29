@@ -311,3 +311,119 @@ def aggregate_overview(year_df: pd.DataFrame, end_month: str) -> Dict[str, float
     return {"total_year_sum": float(r["year_sum"]),
             "yoy": (float(r["yoy"]) if not pd.isna(r["yoy"]) else None),
             "delta": (float(r["delta"]) if not pd.isna(r["delta"]) else None)}
+
+
+def get_comparables(year_df: pd.DataFrame,
+                     end_month: str,
+                     target_code: str,
+                     mode: str = 'abs',
+                     low: Optional[float] = None,
+                     high: Optional[float] = None,
+                     rank_k: int = 10,
+                     filters: Optional[Dict] = None,
+                     tags_map: Optional[Dict[str, List[str]]] = None,
+                     limit: Optional[int] = None) -> pd.DataFrame:
+    """Select comparable SKU snapshot rows based on target and range.
+
+    Parameters
+    ----------
+    year_df : pd.DataFrame
+        Yearly summary long-form dataframe.
+    end_month : str
+        Target month for snapshot.
+    target_code : str
+        Base product code for comparison.
+    mode : str
+        'abs' for absolute difference, 'pct' for percentage, 'rank' for
+        rank based window.
+    low, high : float
+        Range definition depending on mode. For 'abs' and 'pct' modes,
+        they represent +/- offset from target. If None, open-ended.
+    rank_k : int
+        Rank window for 'rank' mode (±rank_k).
+    filters : dict
+        Optional filters such as {'abc': ['A','B'], 'tags': ['x'],
+        'yoy_le': -0.1, 'delta_le': -3e5, 'slope_le': -1.0}.
+    tags_map : dict
+        Mapping product_code -> list of tag strings.
+    limit : int
+        Optional maximum number of rows to return.
+    """
+    snap = year_df[year_df['month'] == end_month].copy()
+    if snap.empty:
+        return pd.DataFrame()
+    snap = snap.dropna(subset=['year_sum'])
+    snap = snap.sort_values('year_sum', ascending=False)
+    snap['rank'] = np.arange(1, len(snap) + 1)
+
+    # ABC classification merge
+    abc_df = abc_classification(year_df, end_month)
+    snap = snap.merge(abc_df, on='product_code', how='left')
+
+    # Tags column
+    if tags_map is not None:
+        snap['tags'] = snap['product_code'].map(lambda c: ','.join(tags_map.get(c, [])))
+    else:
+        snap['tags'] = ''
+
+    target_row = snap[snap['product_code'] == target_code]
+    if target_row.empty:
+        return pd.DataFrame()
+    target_val = target_row['year_sum'].iloc[0]
+    target_rank = target_row['rank'].iloc[0]
+
+    if mode == 'abs':
+        lo = target_val + (low if low is not None else -np.inf)
+        hi = target_val + (high if high is not None else np.inf)
+        cond = (snap['year_sum'] >= lo) & (snap['year_sum'] <= hi)
+    elif mode == 'pct':
+        lo = target_val * (1 + (low if low is not None else -np.inf))
+        hi = target_val * (1 + (high if high is not None else np.inf))
+        cond = (snap['year_sum'] >= lo) & (snap['year_sum'] <= hi)
+    else:  # rank
+        lo = max(1, target_rank - rank_k)
+        hi = target_rank + rank_k
+        cond = (snap['rank'] >= lo) & (snap['rank'] <= hi)
+
+    out = snap[cond].copy()
+
+    if filters:
+        if filters.get('abc'):
+            out = out[out['abc_class'].isin(filters['abc'])]
+        if filters.get('tags'):
+            tagset = set(filters['tags'])
+            out = out[out['product_code'].apply(lambda c: bool(tagset.intersection(tags_map.get(c, []))) if tags_map else False)]
+        if filters.get('yoy_le') is not None:
+            out = out[out['yoy'] <= filters['yoy_le']]
+        if filters.get('delta_le') is not None:
+            out = out[out['delta'] <= filters['delta_le']]
+        if filters.get('slope_le') is not None and 'slope_beta' in out.columns:
+            out = out[out['slope_beta'] <= filters['slope_le']]
+
+    if limit is not None:
+        out = out.head(int(limit))
+
+    cols = ['product_code', 'product_name', 'year_sum', 'yoy', 'delta',
+            'slope_beta', 'abc_class', 'tags', 'rank']
+    return out[cols]
+
+
+def build_indexed_series(year_df: pd.DataFrame,
+                         codes: List[str],
+                         base: str = 'first_non_nan') -> pd.DataFrame:
+    """Return long-form dataframe of index=100 series per SKU."""
+    df = year_df[year_df['product_code'].isin(codes)].copy()
+    pivot = df.pivot(index='month', columns='product_code', values='year_sum').sort_index()
+    if base == 'first_non_nan':
+        base_vals = pivot.apply(lambda col: col.dropna().iloc[0] if not col.dropna().empty else np.nan)
+    else:
+        base_vals = pivot.iloc[0]
+    indexed = pivot.copy()
+    for c in indexed.columns:
+        b = base_vals.get(c, np.nan)
+        if pd.isna(b) or b == 0:
+            indexed[c] = np.nan
+        else:
+            indexed[c] = (indexed[c] / b) * 100.0
+    long_df = indexed.reset_index().melt(id_vars='month', var_name='product_code', value_name='index_value')
+    return long_df

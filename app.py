@@ -18,6 +18,8 @@ from services import (
     compute_hhi,
     build_alerts,
     aggregate_overview,
+    get_comparables,
+    build_indexed_series,
 )
 
 APP_TITLE = "売上年計（12カ月移動累計）ダッシュボード"
@@ -44,6 +46,10 @@ if "tags" not in st.session_state:
     st.session_state.tags = {}  # product_code -> List[str]
 if "saved_views" not in st.session_state:
     st.session_state.saved_views = {}  # name -> dict
+if "compare_params" not in st.session_state:
+    st.session_state.compare_params = {}
+if "compare_results" not in st.session_state:
+    st.session_state.compare_results = None
 
 
 # ---------------- Helpers ----------------
@@ -106,7 +112,7 @@ def download_pdf_overview(kpi: dict, top_df: pd.DataFrame, filename: str) -> byt
 
 # ---------------- Sidebar ----------------
 st.sidebar.title(APP_TITLE)
-page = st.sidebar.radio("メニュー", ["ダッシュボード", "ランキング", "SKU詳細", "データ取込", "アラート", "設定", "保存ビュー"])
+page = st.sidebar.radio("メニュー", ["ダッシュボード", "ランキング", "比較ビュー", "SKU詳細", "データ取込", "アラート", "設定", "保存ビュー"])
 
 # ---------------- Pages ----------------
 
@@ -228,7 +234,133 @@ elif page == "ランキング":
     st.download_button("Excelダウンロード", data=download_excel(snap, f"ranking_{metric}_{end_m}.xlsx"),
                        file_name=f"ranking_{metric}_{end_m}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-# 4) SKU詳細
+
+# 4) 比較ビュー
+elif page == "比較ビュー":
+    require_data()
+    st.header("比較ビュー")
+    params = st.session_state.compare_params
+    year_df = st.session_state.data_year
+    prods = year_df[["product_code","product_name"]].drop_duplicates().sort_values("product_code")
+    prod_opts = prods["product_code"] + " | " + prods["product_name"]
+    default_idx = 0
+    if params.get("target_code"):
+        try:
+            default_idx = prod_opts[prod_opts.str.startswith(params["target_code"])].index[0]
+        except Exception:
+            default_idx = 0
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        end_m = end_month_selector(year_df, key="compare_end_month")
+    with c2:
+        target_label = st.selectbox("基準SKU", options=prod_opts, index=default_idx)
+        target_code = target_label.split(" | ")[0]
+    with c3:
+        mode = st.radio("抽出モード", ["abs","pct","rank"], index=["abs","pct","rank"].index(params.get("mode","pct")), horizontal=True)
+    with c4:
+        if mode == "abs":
+            range_val = st.number_input("±金額", value=float(params.get("range",100000.0)), step=10000.0, format="%.0f")
+        elif mode == "pct":
+            range_val = st.number_input("±%", value=float(params.get("range",0.10)), step=0.01, format="%.2f")
+        else:
+            range_val = st.number_input("±順位", value=int(params.get("range",5)), step=1)
+    with st.expander("フィルタ / オプション"):
+        fil_abc = st.multiselect("ABCクラス", ["A","B","C"], default=params.get("filters", {}).get("abc", []))
+        fil_tags = st.text_input("タグ（カンマ区切り）", value=",".join(params.get("filters", {}).get("tags", [])))
+        fil_yoy = st.number_input("YoY <= ", value=params.get("filters", {}).get("yoy_le", 0.0), step=0.01, format="%.2f")
+        fil_delta = st.number_input("Δ <= ", value=params.get("filters", {}).get("delta_le", 0.0), step=1000.0, format="%.0f")
+        fil_slope = st.number_input("傾き <= ", value=params.get("filters", {}).get("slope_le", 0.0), step=0.1, format="%.2f")
+        index_opt = st.checkbox("インデックス化", value=params.get("index", False))
+        log_opt = st.checkbox("ログ軸", value=params.get("log", False))
+        max_items = st.slider("最大表示件数", 5, 100, value=int(params.get("max_items",20)))
+        sort_metric = st.selectbox("並び順", ["year_sum","yoy","delta","slope_beta"], index=["year_sum","yoy","delta","slope_beta"].index(params.get("sort_metric","year_sum")))
+    if st.button("抽出実行", type="primary"):
+        filters = {}
+        if fil_abc:
+            filters["abc"] = fil_abc
+        tag_list = [t.strip() for t in fil_tags.split(",") if t.strip()]
+        if tag_list:
+            filters["tags"] = tag_list
+        if fil_yoy != 0.0:
+            filters["yoy_le"] = fil_yoy
+        if fil_delta != 0.0:
+            filters["delta_le"] = fil_delta
+        if fil_slope != 0.0:
+            filters["slope_le"] = fil_slope
+        params = {
+            "end_month": end_m,
+            "target_code": target_code,
+            "mode": mode,
+            "range": range_val,
+            "filters": filters,
+            "index": index_opt,
+            "log": log_opt,
+            "max_items": max_items,
+            "sort_metric": sort_metric,
+            "pinned": params.get("pinned", []),
+            "excluded": params.get("excluded", []),
+        }
+        st.session_state.compare_params = params
+        if mode == "rank":
+            comps = get_comparables(year_df, end_m, target_code, mode=mode, rank_k=int(range_val), filters=filters, tags_map=st.session_state.tags)
+        else:
+            comps = get_comparables(year_df, end_m, target_code, mode=mode, low=-range_val, high=range_val, filters=filters, tags_map=st.session_state.tags)
+        pinned = params.get("pinned", [])
+        if pinned:
+            pins = get_comparables(year_df, end_m, target_code, mode="rank", rank_k=len(prods), tags_map=st.session_state.tags)
+            pins = pins[pins["product_code"].isin(pinned)]
+            comps = pd.concat([comps, pins], ignore_index=True)
+        excluded = params.get("excluded", [])
+        if excluded:
+            comps = comps[~comps["product_code"].isin(excluded)]
+        comps = comps.drop_duplicates("product_code")
+        comps = comps.sort_values(sort_metric, ascending=False).head(max_items)
+        if target_code not in comps["product_code"].tolist():
+            base = get_comparables(year_df, end_m, target_code, mode="rank", rank_k=0, tags_map=st.session_state.tags)
+            comps = pd.concat([base, comps], ignore_index=True).drop_duplicates("product_code")
+        st.session_state.compare_results = comps
+    comps = st.session_state.compare_results
+    if isinstance(comps, pd.DataFrame) and not comps.empty:
+        st.subheader("年計ライン比較")
+        codes = comps["product_code"].tolist()
+        data = st.session_state.data_year[st.session_state.data_year["product_code"].isin(codes)].copy()
+        data = data.merge(comps[["product_code","product_name","abc_class","tags"]], on="product_code", how="left")
+        if params.get("index"):
+            idx = build_indexed_series(st.session_state.data_year, codes)
+            data = data.merge(idx, on=["product_code","month"], how="left")
+            ycol = "index_value"
+        else:
+            ycol = "year_sum"
+        fig = px.line(data, x="month", y=ycol, color="product_code",
+                      hover_data=["product_name","year_sum","yoy","delta","slope_beta","abc_class","tags"])
+        for t in fig.data:
+            if t.name == params.get("target_code"):
+                t.update(line={"width":4})
+            else:
+                t.update(line={"width":1, "opacity":0.3})
+        if params.get("log"):
+            fig.update_yaxes(type="log")
+        st.plotly_chart(fig, use_container_width=True, height=500)
+        pin_sel = st.multiselect("固定SKU", options=comps["product_code"], default=params.get("pinned", []))
+        ex_sel = st.multiselect("除外SKU", options=comps["product_code"], default=params.get("excluded", []))
+        if st.button("Pin/Exclude更新"):
+            params['pinned'] = pin_sel
+            params['excluded'] = ex_sel
+            st.session_state.compare_params = params
+        exp_cols = ["product_code","product_name","year_sum","yoy","delta","slope_beta","abc_class","tags"]
+        st.download_button("CSVエクスポート", data=comps[exp_cols].to_csv(index=False).encode("utf-8-sig"), file_name=f"comparables_{params.get('target_code','')}_{params.get('end_month','')}.csv", mime="text/csv")
+        st.subheader("スパークライン")
+        cols = st.columns(4)
+        for i, row in comps.iterrows():
+            g = data[data['product_code'] == row['product_code']].sort_values('month')
+            fig_s = px.line(g, x='month', y='year_sum', height=120)
+            fig_s.update_layout(margin=dict(l=10,r=10,t=20,b=20), xaxis={'visible':False}, yaxis={'visible':False})
+            with cols[i % 4]:
+                st.markdown(f"**{row['product_code']} | {row['product_name']}**")
+                st.plotly_chart(fig_s, use_container_width=True, height=120)
+                st.caption(f"{int(row['year_sum']):,} / YoY {row['yoy']*100:.1f}% / Δ {int(row['delta']):,}")
+
+# 5) SKU詳細
 elif page == "SKU詳細":
     require_data()
     st.header("SKU 詳細")
@@ -320,6 +452,7 @@ elif page == "設定":
 elif page == "保存ビュー":
     st.header("保存ビュー / ブックマーク")
     s = st.session_state.settings
+    cparams = st.session_state.compare_params
     st.write("現在の設定・選択（閾値、ウィンドウ、単位など）を名前を付けて保存します。")
 
     name = st.text_input("ビュー名")
@@ -327,7 +460,7 @@ elif page == "保存ビュー":
         if not name:
             st.warning("ビュー名を入力してください。")
         else:
-            st.session_state.saved_views[name] = dict(s)  # shallow copy
+            st.session_state.saved_views[name] = {"settings": dict(s), "compare": dict(cparams)}
             st.success(f"ビュー「{name}」を保存しました。")
 
     st.subheader("保存済みビュー")
@@ -337,5 +470,18 @@ elif page == "保存ビュー":
         for k, v in st.session_state.saved_views.items():
             st.write(f"**{k}**: {json.dumps(v, ensure_ascii=False)}")
             if st.button(f"適用: {k}"):
-                st.session_state.settings.update(v)
+                st.session_state.settings.update(v.get("settings", {}))
+                st.session_state.compare_params = v.get("compare", {})
+                cp = st.session_state.compare_params
+                if cp and st.session_state.data_year is not None:
+                    filt = cp.get("filters", {})
+                    if cp.get("mode") == "rank":
+                        st.session_state.compare_results = get_comparables(
+                            st.session_state.data_year, cp.get("end_month"), cp.get("target_code"),
+                            mode=cp.get("mode"), rank_k=int(cp.get("range", 5)), filters=filt, tags_map=st.session_state.tags)
+                    else:
+                        st.session_state.compare_results = get_comparables(
+                            st.session_state.data_year, cp.get("end_month"), cp.get("target_code"),
+                            mode=cp.get("mode"), low=-float(cp.get("range", 0)), high=float(cp.get("range", 0)),
+                            filters=filt, tags_map=st.session_state.tags)
                 st.success(f"ビュー「{k}」を適用しました。")
