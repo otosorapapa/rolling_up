@@ -324,7 +324,10 @@ elif page == "比較ビュー":
         st.subheader("年計ライン比較")
         codes = comps["product_code"].tolist()
         data = st.session_state.data_year[st.session_state.data_year["product_code"].isin(codes)].copy()
-        data = data.merge(comps[["product_code","product_name","abc_class","tags"]], on="product_code", how="left")
+        # `data` already includes `product_name`; merging another `product_name` from
+        # `comps` creates `product_name_x`/`product_name_y` columns which break
+        # Plotly's `hover_data` lookup. Merge only the additional attributes.
+        data = data.merge(comps[["product_code","abc_class","tags"]], on="product_code", how="left")
         if params.get("index"):
             idx = build_indexed_series(st.session_state.data_year, codes)
             data = data.merge(idx, on=["product_code","month"], how="left")
