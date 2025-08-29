@@ -340,7 +340,9 @@ elif page == "比較ビュー":
             if t.name == params.get("target_code"):
                 t.update(line={"width":4})
             else:
-                t.update(line={"width":1, "opacity":0.3})
+                # Plotly's `line` object does not support an `opacity` attribute.
+                # Apply transparency at the trace level instead.
+                t.update(line={"width":1}, opacity=0.3)
         if params.get("log"):
             fig.update_yaxes(type="log")
         st.plotly_chart(fig, use_container_width=True, height=500)
