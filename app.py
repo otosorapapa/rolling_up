@@ -591,7 +591,14 @@ elif page == "比較ビュー":
     with c13:
         unit = st.radio("単位", ["円", "千円", "百万円"], horizontal=True, index=1)
     with c14:
-        n_win = st.slider("傾きウィンドウ（月）", 3, 12, 6, 1)
+        n_win = st.slider(
+            "傾きウィンドウ（月）",
+            0,
+            12,
+            6,
+            1,
+            help="0=自動（系列の全期間で判定）",
+        )
     with c15:
         cmp_mode = st.radio("傾き条件", ["以上", "未満"], horizontal=True)
     with c16:
@@ -647,8 +654,13 @@ elif page == "比較ビュー":
     mask = (snap[key] >= v) if cmp_mode == "以上" else (snap[key] <= v)
     codes_by_slope = set(snap.loc[mask, "product_code"])
 
-    shape_df = shape_flags(year_df, window=max(8, n_win * 2),
-                            alpha_ratio=0.02 * (1.0 - sens), amp_ratio=0.06 * (1.0 - sens))
+    eff_n = n_win if n_win > 0 else 12
+    shape_df = shape_flags(
+        year_df,
+        window=max(6, eff_n * 2),
+        alpha_ratio=0.02 * (1.0 - sens),
+        amp_ratio=0.06 * (1.0 - sens),
+    )
     codes_steep = set(snap.loc[snap["slope_z"].abs() >= z_thr, "product_code"])
     codes_mtn = set(shape_df.loc[shape_df["is_mountain"], "product_code"])
     codes_val = set(shape_df.loc[shape_df["is_valley"], "product_code"])
