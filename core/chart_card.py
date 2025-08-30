@@ -3,7 +3,15 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from services import slopes_snapshot, shape_flags, top_growth_codes
+from services import (
+    slopes_snapshot,
+    shape_flags,
+    top_growth_codes,
+    forecast_linear_band,
+    forecast_holt_linear,
+    band_from_moving_stats,
+    detect_linear_anomalies,
+)
 from core.plot_utils import add_latest_labels_no_overlap
 
 UNIT_SCALE = {"円": 1, "千円": 1_000, "百万円": 1_000_000}
@@ -169,6 +177,26 @@ def toolbar_sku_detail(multi_mode: bool):
             sens=sens,
             quick=quick,
         )
+    p1, p2, p3, p4, p5 = st.columns([1.4, 0.9, 0.9, 1.2, 0.9])
+    with p1:
+        method_opts = ["なし", "ローカル線形±kσ", "Holt線形", "移動平均±kσ", "移動平均±MAD"]
+        f_method = st.selectbox("予測帯", method_opts, index=method_opts.index(ui.get("f_method", "なし")))
+        ui["f_method"] = f_method
+    with p2:
+        f_win = st.selectbox("学習窓幅", [6, 9, 12], index=[6, 9, 12].index(ui.get("f_win", 12)))
+        ui["f_win"] = f_win
+    with p3:
+        f_h = st.selectbox("先の予測ステップ", [3, 6, 12], index=[3, 6, 12].index(ui.get("f_h", 6)))
+        ui["f_h"] = f_h
+    with p4:
+        f_k = st.slider("バンド幅k", 1.5, 3.0, ui.get("f_k", 2.0), 0.1)
+        ui["f_k"] = f_k
+    with p5:
+        f_robust = st.checkbox("ロバスト(MAD)", value=ui.get("f_robust", False))
+        ui["f_robust"] = f_robust
+    anom_opts = ["OFF", "z≥2.5", "MAD≥3.5"]
+    anomaly = st.selectbox("異常検知", anom_opts, index=anom_opts.index(ui.get("anomaly", "OFF")))
+    ui["anomaly"] = anomaly
     st.session_state["ui"] = ui
     return dict(
         period=period,
@@ -182,6 +210,12 @@ def toolbar_sku_detail(multi_mode: bool):
         max_labels=max_labels,
         alt_side=alt_side,
         slope_conf=slope_conf,
+        forecast_method=ui.get("f_method", "なし"),
+        forecast_window=ui.get("f_win", 12),
+        forecast_horizon=ui.get("f_h", 6),
+        forecast_k=ui.get("f_k", 2.0),
+        forecast_robust=ui.get("f_robust", False),
+        anomaly=ui.get("anomaly", "OFF"),
     )
 
 
@@ -245,6 +279,51 @@ def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None):
         dragmode={"パン": "pan", "ズーム": "zoom", "選択": "select"}[tb["op_mode"]],
         hovermode="closest" if tb["hover_mode"] == "個別" else "x unified",
     )
+
+    if tb.get("forecast_method") and tb["forecast_method"] != "なし":
+        method = tb["forecast_method"]
+        win = tb.get("forecast_window", 12)
+        horizon = tb.get("forecast_horizon", 6)
+        k = tb.get("forecast_k", 2.0)
+        robust = tb.get("forecast_robust", False)
+        for name, d in dfp.groupby("display_name"):
+            s = d.sort_values("month").set_index("month")["year_sum"]
+            if method == "ローカル線形±kσ":
+                f, lo, hi = forecast_linear_band(s, window=win, horizon=horizon, k=k, robust=robust)
+            elif method == "Holt線形":
+                f = forecast_holt_linear(s, horizon=horizon)
+                f2, lo, hi = forecast_linear_band(s, window=win, horizon=horizon, k=k, robust=robust)
+                lo, hi = f - (f2 - lo), f + (hi - f2)
+            elif method == "移動平均±kσ":
+                f, lo, hi = band_from_moving_stats(s, window=win, horizon=horizon, k=k, robust=False)
+            else:
+                f, lo, hi = band_from_moving_stats(s, window=win, horizon=horizon, k=k, robust=True)
+            if len(f) == 0:
+                continue
+            last_t = pd.to_datetime(d["month"].max())
+            future_idx = pd.period_range(last_t.to_period("M"), periods=horizon, freq="M").to_timestamp() + pd.offsets.MonthBegin(1)
+            fig.add_scatter(x=future_idx, y=f/scale, mode="lines", name=f"{name}予測", line=dict(dash="dash"), showlegend=False)
+            fig.add_scatter(x=future_idx, y=hi/scale, mode="lines", line=dict(width=0), showlegend=False)
+            fig.add_scatter(x=future_idx, y=lo/scale, mode="lines", fill="tonexty", line=dict(width=0), fillcolor="rgba(113,178,255,.18)", showlegend=False)
+
+    if tb.get("anomaly") and tb["anomaly"] != "OFF":
+        robust = tb["anomaly"].startswith("MAD")
+        thr = 3.5 if robust else 2.5
+        for name, d in dfp.groupby("display_name"):
+            s = d.sort_values("month").set_index("month")["year_sum"]
+            res = detect_linear_anomalies(s, window=tb.get("forecast_window", 12), threshold=thr, robust=robust)
+            if res.empty:
+                continue
+            fig.add_scatter(
+                x=pd.to_datetime(res["month"]),
+                y=res["value"] / scale,
+                mode="markers",
+                name=f"{name}異常",
+                marker=dict(symbol="triangle-up", color="red", size=10),
+                showlegend=False,
+                customdata=np.stack([res["score"]], axis=-1),
+                hovertemplate=f"<b>{name}</b><br>月：%{{x|%Y-%m}}<br>値：%{{y:,.0f}} {tb['unit']}<br>スコア：%{{customdata[0]:.2f}}<extra></extra>",
+            )
 
     theme_is_dark = st.get_option("theme.base") == "dark"
     halo = "#ffffff" if theme_is_dark else "#222222"
