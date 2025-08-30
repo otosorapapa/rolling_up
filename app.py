@@ -353,16 +353,105 @@ elif page == "比較ビュー":
 
     # ---- Overlay ----
     df_long, _ = get_yearly_series(year_df, codes)
-    fig = px.line(df_long, x="month", y="year_sum", color="product_code", hover_data=["product_name"])
+    df_long["month"] = pd.to_datetime(df_long["month"])
+    df_long["display_name"] = df_long["product_name"].fillna(df_long["product_code"])
+    fig = px.line(
+        df_long,
+        x="month",
+        y="year_sum",
+        color="display_name",
+        custom_data=["display_name"],
+    )
     fig.add_hrect(y0=low, y1=high, fillcolor="green", opacity=0.12, line_width=0)
     if apply_mode == "バンド外ゴースト":
         full_long, _ = get_yearly_series(year_df, snapshot["product_code"].tolist())
+        full_long["month"] = pd.to_datetime(full_long["month"])
+        full_long["display_name"] = full_long["product_name"].fillna(full_long["product_code"])
         outside = full_long[~full_long["product_code"].isin(codes)]
         if not outside.empty:
-            ghost = px.line(outside, x="month", y="year_sum", color="product_code").update_traces(line=dict(width=1), opacity=0.15, showlegend=False)
+            ghost = px.line(
+                outside,
+                x="month",
+                y="year_sum",
+                color="display_name",
+                custom_data=["display_name"],
+            ).update_traces(
+                line=dict(width=1),
+                opacity=0.15,
+                showlegend=False,
+                hovertemplate="<b>%{customdata[0]}</b><br>%{x|%Y-%m}<br>年計：%{y:,.0f} 円",
+            )
             for t in ghost.data:
                 fig.add_trace(t)
-    st.plotly_chart(fig, use_container_width=True, height=500)
+
+    n_months = (
+        df_long["month"].max().year * 12
+        + df_long["month"].max().month
+        - df_long["month"].min().year * 12
+        - df_long["month"].min().month
+        + 1
+    )
+    dtick = "M1" if n_months <= 18 else ("M3" if n_months <= 48 else "M6")
+    fig.update_xaxes(
+        dtick=dtick,
+        tickformat="%Y-%m",
+        tickangle=-45,
+        showgrid=True,
+        rangeslider_visible=True,
+        showspikes=True,
+        spikemode="across",
+        spikesnap="cursor",
+    )
+    fig.update_yaxes(
+        tickformat="~,d",
+        title_text="売上 年計（円）",
+        zeroline=True,
+        showgrid=True,
+    )
+    fig.update_layout(
+        hovermode="x unified",
+        legend_title_text="商品名",
+        legend=dict(
+            orientation="v",
+            y=1,
+            x=1.02,
+            yanchor="top",
+            xanchor="left",
+            tracegroupgap=8,
+        ),
+        margin=dict(l=60, r=140, t=40, b=60),
+        template="plotly_dark",
+        paper_bgcolor="#0f172a",
+        plot_bgcolor="#0f172a",
+        height=500,
+    )
+    fig.update_traces(
+        mode="lines+markers",
+        line=dict(width=2),
+        marker=dict(size=4),
+        hovertemplate="<b>%{customdata[0]}</b><br>%{x|%Y-%m}<br>年計：%{y:,.0f} 円",
+        selector=dict(showlegend=True),
+    )
+
+    last_df = df_long.sort_values("month").groupby("display_name").tail(1)
+    for idx, r in last_df.iterrows():
+        yshift = 8 if idx % 2 == 0 else -8
+        fig.add_annotation(
+            x=r["month"],
+            y=r["year_sum"],
+            text=f"{r['display_name']}：{r['year_sum']:,.0f}",
+            showarrow=False,
+            xanchor="left",
+            yanchor="middle",
+            font=dict(size=11),
+            yshift=yshift,
+        )
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        config={"displaylogo": False, "toImageButtonOptions": {"format": "png"}},
+    )
 
     # PNG/CSVエクスポート
     snap_export = snapshot[snapshot["product_code"].isin(codes)]
@@ -378,14 +467,34 @@ elif page == "比較ビュー":
     cols = st.columns(3)
     for i, code in enumerate(codes):
         g = df_long[df_long["product_code"] == code]
-        fig_s = px.line(g, x="month", y="year_sum", height=150)
+        disp = g["display_name"].iloc[0] if not g.empty else code
+        fig_s = px.line(
+            g,
+            x="month",
+            y="year_sum",
+            color="display_name",
+            height=150,
+            custom_data=["display_name"],
+        )
         fig_s.add_hrect(y0=low, y1=high, fillcolor="green", opacity=0.12, line_width=0)
+        fig_s.update_xaxes(tickformat="%Y-%m", dtick="M3")
+        fig_s.update_yaxes(tickformat="~,d")
+        fig_s.update_traces(
+            mode="lines+markers",
+            line=dict(width=2),
+            marker=dict(size=4),
+            hovertemplate="<b>%{customdata[0]}</b><br>%{x|%Y-%m}<br>年計：%{y:,.0f} 円",
+        )
         with cols[i % 3]:
-            label = code
+            label = disp
             if code in new_in:
                 label += " 🆕"
             st.markdown(f"**{label}**")
-            st.plotly_chart(fig_s, use_container_width=True, height=150)
+            st.plotly_chart(
+                fig_s,
+                use_container_width=True,
+                config={"displaylogo": False, "toImageButtonOptions": {"format": "png"}},
+            )
 
     if new_in or left_out:
         st.info(f"新規侵入: {', '.join(sorted(new_in)) or 'なし'} / 離脱: {', '.join(sorted(left_out)) or 'なし'}")
