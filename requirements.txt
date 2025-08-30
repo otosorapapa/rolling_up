@@ -9,7 +9,6 @@ reportlab>=4.0
 pyarrow
 duckdb
 statsmodels
-pmdarima
 python-pptx
 scipy
 scikit-learn

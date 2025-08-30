@@ -662,3 +662,86 @@ def shape_flags(df_long: pd.DataFrame, key_col="product_code",
                  (((s_smooth.iloc[0]+s_smooth.iloc[-1])/2 - s_smooth.min()) / max(1.0, m) >= amp_ratio)
         out.append({key_col: code, "is_mountain": bool(is_mtn), "is_valley": bool(is_val)})
     return pd.DataFrame(out)
+
+
+# ---------- Forecast & Anomaly Utilities ----------
+
+def forecast_linear_band(y: pd.Series, window:int=12, horizon:int=6, k:float=2.0, robust:bool=False):
+    """
+    末尾window点で単回帰→将来horizon点を線形予測し、残差のσで±k帯。
+    戻り値: (fcast: np.ndarray, lo: np.ndarray, hi: np.ndarray)
+    """
+    s = pd.Series(y).dropna()
+    if len(s) < max(3, window):
+        return np.array([]), np.array([]), np.array([])
+    y_win = s.tail(window).to_numpy(dtype=float)
+    x = np.arange(len(y_win), dtype=float)
+    m, b = np.polyfit(x, y_win, 1)
+    y_hat = m*x + b
+    resid = y_win - y_hat
+    if robust:
+        sigma = 1.4826 * np.median(np.abs(resid - np.median(resid)))
+    else:
+        sigma = resid.std(ddof=1) if len(resid) > 1 else 0.0
+    x_f = np.arange(len(y_win), len(y_win)+horizon, dtype=float)
+    f = m*x_f + b
+    return f, f - k*sigma, f + k*sigma
+
+def forecast_holt_linear(y: pd.Series, alpha:float=0.4, beta:float=0.2, horizon:int=6):
+    """
+    Holtの線形成分のみ（季節無し）を自前実装。戻り値: 予測np.ndarray
+    """
+    s = pd.Series(y).dropna()
+    if len(s) < 3:
+        return np.array([])
+    l, b = float(s.iloc[0]), float(s.iloc[1]-s.iloc[0])
+    for val in s:
+        l_new = alpha*val + (1-alpha)*(l + b)
+        b_new = beta*(l_new - l) + (1-beta)*b
+        l, b = l_new, b_new
+    return np.array([l + (i+1)*b for i in range(horizon)])
+
+def band_from_moving_stats(y: pd.Series, window:int=12, horizon:int=6, k:float=2.0, robust:bool=False):
+    """
+    移動平均±kσ/MAD に基づく水平バンド（予測値は直近平均）
+    """
+    s = pd.Series(y).dropna()
+    if len(s) < 3:
+        return np.array([]), np.array([]), np.array([])
+    tail = s.tail(window)
+    mu = tail.mean()
+    if robust:
+        med = tail.median()
+        sigma = 1.4826 * np.median(np.abs(tail - med))
+    else:
+        sigma = tail.std(ddof=1)
+    f = np.full(horizon, mu, dtype=float)
+    return f, f - k*sigma, f + k*sigma
+
+def detect_linear_anomalies(y: pd.Series, window:int=12, threshold:float=2.5, robust:bool=False) -> pd.DataFrame:
+    """
+    ローカル線形回帰の残差に基づく異常検知。
+    残差のzスコアまたはMADスコアがthresholdを超える点を返す。
+    戻り値: DataFrame(month,value,score)
+    """
+    s = pd.Series(y).dropna()
+    if len(s) < window + 1:
+        return pd.DataFrame(columns=["month","value","score"])
+    months = s.index.tolist()
+    out = []
+    for i in range(window, len(s)):
+        y_win = s.iloc[i-window:i].to_numpy(dtype=float)
+        x = np.arange(len(y_win), dtype=float)
+        m, b = np.polyfit(x, y_win, 1)
+        y_hat = m*len(y_win) + b
+        resid = float(s.iloc[i]) - y_hat
+        fit_resid = y_win - (m*x + b)
+        if robust:
+            sigma = 1.4826 * np.median(np.abs(fit_resid - np.median(fit_resid)))
+        else:
+            sigma = fit_resid.std(ddof=1) if len(fit_resid) > 1 else 0.0
+        score = resid / sigma if sigma > 0 else 0.0
+        if np.abs(score) >= threshold:
+            out.append({"month": months[i], "value": float(s.iloc[i]), "score": float(score)})
+    return pd.DataFrame(out)
+

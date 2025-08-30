@@ -703,6 +703,12 @@ elif page == "比較ビュー":
         max_labels=label_max,
         alt_side=alternate_side,
         slope_conf=None,
+        forecast_method="なし",
+        forecast_window=12,
+        forecast_horizon=6,
+        forecast_k=2.0,
+        forecast_robust=False,
+        anomaly="OFF",
     )
 
     st.markdown('<div class="chart-body">', unsafe_allow_html=True)
