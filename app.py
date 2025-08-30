@@ -43,6 +43,7 @@ from services import (
     filter_products_by_band,
     get_yearly_series,
     top_growth_codes,
+    trend_last6,
 )
 
 APP_TITLE = "売上年計（12カ月移動累計）ダッシュボード"
@@ -404,6 +405,63 @@ elif page == "比較ビュー":
     ghost_outside = []
     if apply_mode == "バンド外ゴースト":
         ghost_outside = snapshot[~snapshot["product_code"].isin(codes)]["product_code"].tolist()
+
+    # ---- 操作ツールバー ----
+    st.markdown(
+        """
+<style>
+.toolbar-sticky { position: sticky; top: 0; z-index: 999;
+  background: var(--background-color,#0f172a); padding:.5rem .75rem;
+  border-bottom:1px solid rgba(255,255,255,.08); }
+.toolbar-row { display:flex; gap:.75rem; flex-wrap:wrap; align-items:center; }
+.stSlider, .stSelectbox, .stRadio, .stCheckbox { margin-bottom: 0 !important; }
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown('<div class="toolbar-sticky">', unsafe_allow_html=True)
+    with st.container():
+        c1, c2, c3, c4, c5 = st.columns([1.4, 1.8, 1.1, 1.2, 0.9])
+        with c1:
+            period = st.radio("期間", ["12ヶ月", "24ヶ月", "36ヶ月"], index=1, horizontal=True)
+        with c2:
+            node_mode = st.radio("ノード表示", ["自動", "主要ノードのみ", "すべて", "非表示"], index=0, horizontal=True)
+        with c3:
+            hover_mode = st.radio("ホバー表示", ["個別", "同月まとめ"], index=1, horizontal=True)
+        with c4:
+            op_mode = st.radio("操作モード", ["パン", "ズーム", "選択"], index=0, horizontal=True)
+        with c5:
+            peak_on = st.checkbox("ピーク表示", value=False)
+        c6, c7 = st.columns([1.6, 2.4])
+        with c6:
+            pos_thr = st.slider("傾きしきい値（%/月）", 0.01, 0.10, 0.03, 0.01)
+        with c7:
+            group_view = st.radio("表示グループ", ["すべて", "明日の商品", "昨日の商品", "横ばい"], index=0, horizontal=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # ---- トレンド分類 ----
+    trend_groups = {}
+    df_sorted = st.session_state.data_year.sort_values("month")
+    for code, g in df_sorted.groupby("product_code"):
+        res = trend_last6(g["year_sum"])
+        ratio = res["ratio"]
+        if ratio >= pos_thr:
+            group = "明日の商品"
+        elif ratio <= -pos_thr:
+            group = "昨日の商品"
+        else:
+            group = "横ばい"
+        trend_groups[code] = group
+
+    counts = {"明日の商品": 0, "昨日の商品": 0, "横ばい": 0}
+    for g in trend_groups.values():
+        counts[g] = counts.get(g, 0) + 1
+    st.caption(
+        f"明日 {counts['明日の商品']}｜昨日 {counts['昨日の商品']}｜横ばい {counts['横ばい']}"
+    )
+    if group_view != "すべて":
+        ghost_outside = ghost_outside + [c for c in codes if trend_groups.get(c, "横ばい") != group_view]
+        codes = [c for c in codes if trend_groups.get(c, "横ばい") == group_view]
     all_codes = codes + ghost_outside
 
     # ---- Overlay ----
@@ -411,8 +469,6 @@ elif page == "比較ビュー":
     df_long["month"] = pd.to_datetime(df_long["month"])
     df_long["display_name"] = df_long["product_name"].fillna(df_long["product_code"])
 
-    # 期間プリセット
-    period = st.radio("期間", ["12ヶ月", "24ヶ月", "36ヶ月"], index=1, horizontal=True)
     months_back = {"12ヶ月": 12, "24ヶ月": 24, "36ヶ月": 36}[period]
     max_month = df_long["month"].max()
     if pd.notna(max_month):
@@ -434,11 +490,8 @@ elif page == "比較ビュー":
 
     df_main = df_long[df_long["product_code"].isin(main_codes)]
 
-    node_mode = st.radio("ノード表示", ["自動", "主要ノードのみ", "すべて", "非表示"], index=0, horizontal=True)
     node_size = st.radio("ノードサイズ", ["小", "中", "大"], index=1, horizontal=True)
     show_keynode_labels = st.checkbox("主要ノードラベル", value=True)
-    hover_mode = st.radio("ホバー表示", ["個別", "同月まとめ"], index=1, horizontal=True)
-    op_mode = st.radio("操作モード", ["パン", "ズーム", "選択"], index=0, horizontal=True)
 
     fig = px.line(
         df_main,
@@ -473,6 +526,7 @@ elif page == "比較ビュー":
         selector=dict(mode="lines"),
         hovertemplate="<b>%{customdata[0]}</b><br>月：%{x|%Y-%m}<br>年計：%{y:,.0f} 円<extra></extra>",
     )
+    fig.update_layout(hoverlabel=dict(bgcolor="rgba(30,30,30,0.92)", font=dict(color="#fff", size=12)))
 
     theme_is_dark = st.get_option("theme.base") == "dark"
     HALO = "#ffffff" if theme_is_dark else "#222222"
@@ -522,7 +576,9 @@ elif page == "比較ビュー":
                 arrowwidth=1,
                 ax=8,
                 ay=-12,
-                bgcolor="rgba(0,0,0,0.6)" if theme_is_dark else "rgba(255,255,255,0.8)",
+                bgcolor="rgba(0,0,0,0)",
+                bordercolor="rgba(0,0,0,0)",
+                borderwidth=0,
                 font=dict(size=11),
             )
 
@@ -565,7 +621,7 @@ elif page == "比較ビュー":
     if hover_mode == "個別":
         fig.update_layout(hovermode="closest")
     else:
-        fig.update_layout(hovermode="x unified", hoverlabel=dict(align="left", bgcolor="rgba(30,30,30,0.95)", font_size=12))
+        fig.update_layout(hovermode="x unified", hoverlabel=dict(align="left"))
 
     pin_name = None
     if pin_code:
@@ -586,10 +642,13 @@ elif page == "比較ビュー":
             xanchor="left",
             yanchor="middle",
             font=dict(size=11),
+            bgcolor="rgba(0,0,0,0)",
+            bordercolor="rgba(0,0,0,0)",
+            borderwidth=0,
             yshift=yshift,
         )
 
-    if st.checkbox("ピーク表示"):
+    if peak_on:
         for name, grp in df_main.groupby("display_name"):
             max_row = grp.loc[grp["year_sum"].idxmax()]
             min_row = grp.loc[grp["year_sum"].idxmin()]
@@ -600,6 +659,9 @@ elif page == "比較ビュー":
                 showarrow=False,
                 yanchor="bottom",
                 font=dict(size=9),
+                bgcolor="rgba(0,0,0,0)",
+                bordercolor="rgba(0,0,0,0)",
+                borderwidth=0,
             )
             fig.add_annotation(
                 x=min_row["month"],
@@ -608,6 +670,9 @@ elif page == "比較ビュー":
                 showarrow=False,
                 yanchor="top",
                 font=dict(size=9),
+                bgcolor="rgba(0,0,0,0)",
+                bordercolor="rgba(0,0,0,0)",
+                borderwidth=0,
             )
 
     st.plotly_chart(
@@ -682,17 +747,20 @@ elif page == "比較ビュー":
                     arrowwidth=1,
                     ax=8,
                     ay=-12,
-                    bgcolor="rgba(0,0,0,0.6)" if theme_is_dark else "rgba(255,255,255,0.8)",
+                    bgcolor="rgba(0,0,0,0)",
+                    bordercolor="rgba(0,0,0,0)",
+                    borderwidth=0,
                     font=dict(size=10),
                 )
         fig_s.update_xaxes(tickformat="%Y-%m", dtick=dtick, title_text="月（YYYY-MM）")
         fig_s.update_yaxes(tickformat="~,d", range=[0, ymax] if ymax else None, title_text="売上 年計（円）")
         fig_s.update_layout(font=dict(family="Noto Sans JP, Meiryo, Arial", size=12))
+        fig_s.update_layout(hoverlabel=dict(bgcolor="rgba(30,30,30,0.92)", font=dict(color="#fff", size=12)))
         fig_s.update_layout(dragmode=drag)
         if hover_mode == "個別":
             fig_s.update_layout(hovermode="closest")
         else:
-            fig_s.update_layout(hovermode="x unified", hoverlabel=dict(align="left", bgcolor="rgba(30,30,30,0.95)", font_size=12))
+            fig_s.update_layout(hovermode="x unified", hoverlabel=dict(align="left"))
         last_val = g.sort_values("month")["year_sum"].iloc[-1] if not g.empty else np.nan
         with cols[i % col_count]:
             st.metric(disp, f"{last_val:,.0f}" if not np.isnan(last_val) else "—")
