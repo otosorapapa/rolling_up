@@ -948,11 +948,12 @@ zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配�
     for i, code in enumerate(page_codes):
         g = df_long[df_long["product_code"] == code]
         disp = g["display_name"].iloc[0] if not g.empty else code
+        palette = fig.layout.colorway or px.colors.qualitative.Safe
         fig_s = px.line(
             g,
             x="month",
             y="year_sum_disp",
-            color_discrete_sequence=[fig.layout.colorway[i % len(fig.layout.colorway)]],
+            color_discrete_sequence=[palette[i % len(palette)]],
             custom_data=["display_name"],
         )
         fig_s.update_traces(
