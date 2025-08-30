@@ -24,3 +24,10 @@ streamlit run app.py
 - ランキングで年計ゼロを除外するバー表示
 - CSV/XLSX/PDF（KPI+Top10）エクスポート
 - ビュー保存（閾値/ウィンドウ/単位）
+
+## 指標の数式
+- 年計 (MAT): \(MAT_t = \sum_{i=0}^{11} revenue_{t-i}\)
+- PVM分解: \(\Delta Rev = \sum_i (p_i^1 - p_i^0) q_i^0 + \sum_i p_i^0 (q_i^1 - q_i^0) + Mix\)
+
+## テスト
+`pytest -q`
