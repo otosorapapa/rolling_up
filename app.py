@@ -18,8 +18,11 @@ from services import (
     compute_hhi,
     build_alerts,
     aggregate_overview,
-    get_comparables,
     build_indexed_series,
+    latest_yearsum_snapshot,
+    resolve_band,
+    filter_products_by_band,
+    get_yearly_series,
 )
 
 APP_TITLE = "売上年計（12カ月移動累計）ダッシュボード"
@@ -235,135 +238,149 @@ elif page == "ランキング":
                        file_name=f"ranking_{metric}_{end_m}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
-# 4) 比較ビュー
+    # 4) 比較ビュー（マルチ商品バンド）
 elif page == "比較ビュー":
     require_data()
-    st.header("比較ビュー")
+    st.header("マルチ商品比較")
     params = st.session_state.compare_params
     year_df = st.session_state.data_year
-    prods = year_df[["product_code","product_name"]].drop_duplicates().sort_values("product_code")
-    prod_opts = prods["product_code"] + " | " + prods["product_name"]
-    default_idx = 0
-    if params.get("target_code"):
-        try:
-            default_idx = prod_opts[prod_opts.str.startswith(params["target_code"])].index[0]
-        except Exception:
-            default_idx = 0
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        end_m = end_month_selector(year_df, key="compare_end_month")
-    with c2:
-        target_label = st.selectbox("基準SKU", options=prod_opts, index=default_idx)
-        target_code = target_label.split(" | ")[0]
-    with c3:
-        mode = st.radio("抽出モード", ["abs","pct","rank"], index=["abs","pct","rank"].index(params.get("mode","pct")), horizontal=True)
-    with c4:
-        if mode == "abs":
-            range_val = st.number_input("±金額", value=float(params.get("range",100000.0)), step=10000.0, format="%.0f")
-        elif mode == "pct":
-            range_val = st.number_input("±%", value=float(params.get("range",0.10)), step=0.01, format="%.2f")
-        else:
-            range_val = st.number_input("±順位", value=int(params.get("range",5)), step=1)
-    with st.expander("フィルタ / オプション"):
-        fil_abc = st.multiselect("ABCクラス", ["A","B","C"], default=params.get("filters", {}).get("abc", []))
-        fil_tags = st.text_input("タグ（カンマ区切り）", value=",".join(params.get("filters", {}).get("tags", [])))
-        fil_yoy = st.number_input("YoY <= ", value=params.get("filters", {}).get("yoy_le", 0.0), step=0.01, format="%.2f")
-        fil_delta = st.number_input("Δ <= ", value=params.get("filters", {}).get("delta_le", 0.0), step=1000.0, format="%.0f")
-        fil_slope = st.number_input("傾き <= ", value=params.get("filters", {}).get("slope_le", 0.0), step=0.1, format="%.2f")
-        index_opt = st.checkbox("インデックス化", value=params.get("index", False))
-        log_opt = st.checkbox("ログ軸", value=params.get("log", False))
-        max_items = st.slider("最大表示件数", 5, 100, value=int(params.get("max_items",20)))
-        sort_metric = st.selectbox("並び順", ["year_sum","yoy","delta","slope_beta"], index=["year_sum","yoy","delta","slope_beta"].index(params.get("sort_metric","year_sum")))
-    if st.button("抽出実行", type="primary"):
-        filters = {}
-        if fil_abc:
-            filters["abc"] = fil_abc
-        tag_list = [t.strip() for t in fil_tags.split(",") if t.strip()]
-        if tag_list:
-            filters["tags"] = tag_list
-        if fil_yoy != 0.0:
-            filters["yoy_le"] = fil_yoy
-        if fil_delta != 0.0:
-            filters["delta_le"] = fil_delta
-        if fil_slope != 0.0:
-            filters["slope_le"] = fil_slope
-        params = {
-            "end_month": end_m,
-            "target_code": target_code,
-            "mode": mode,
-            "range": range_val,
-            "filters": filters,
-            "index": index_opt,
-            "log": log_opt,
-            "max_items": max_items,
-            "sort_metric": sort_metric,
-            "pinned": params.get("pinned", []),
-            "excluded": params.get("excluded", []),
-        }
-        st.session_state.compare_params = params
-        if mode == "rank":
-            comps = get_comparables(year_df, end_m, target_code, mode=mode, rank_k=int(range_val), filters=filters, tags_map=st.session_state.tags)
-        else:
-            comps = get_comparables(year_df, end_m, target_code, mode=mode, low=-range_val, high=range_val, filters=filters, tags_map=st.session_state.tags)
-        pinned = params.get("pinned", [])
-        if pinned:
-            pins = get_comparables(year_df, end_m, target_code, mode="rank", rank_k=len(prods), tags_map=st.session_state.tags)
-            pins = pins[pins["product_code"].isin(pinned)]
-            comps = pd.concat([comps, pins], ignore_index=True)
-        excluded = params.get("excluded", [])
-        if excluded:
-            comps = comps[~comps["product_code"].isin(excluded)]
-        comps = comps.drop_duplicates("product_code")
-        comps = comps.sort_values(sort_metric, ascending=False).head(max_items)
-        if target_code not in comps["product_code"].tolist():
-            base = get_comparables(year_df, end_m, target_code, mode="rank", rank_k=0, tags_map=st.session_state.tags)
-            comps = pd.concat([base, comps], ignore_index=True).drop_duplicates("product_code")
-        st.session_state.compare_results = comps
-    comps = st.session_state.compare_results
-    if isinstance(comps, pd.DataFrame) and not comps.empty:
-        st.subheader("年計ライン比較")
-        codes = comps["product_code"].tolist()
-        data = st.session_state.data_year[st.session_state.data_year["product_code"].isin(codes)].copy()
-        # `data` already includes `product_name`; merging another `product_name` from
-        # `comps` creates `product_name_x`/`product_name_y` columns which break
-        # Plotly's `hover_data` lookup. Merge only the additional attributes.
-        data = data.merge(comps[["product_code","abc_class","tags"]], on="product_code", how="left")
-        if params.get("index"):
-            idx = build_indexed_series(st.session_state.data_year, codes)
-            data = data.merge(idx, on=["product_code","month"], how="left")
-            ycol = "index_value"
-        else:
-            ycol = "year_sum"
-        fig = px.line(data, x="month", y=ycol, color="product_code",
-                      hover_data=["product_name","year_sum","yoy","delta","slope_beta","abc_class","tags"])
-        for t in fig.data:
-            if t.name == params.get("target_code"):
-                t.update(line={"width":4})
-            else:
-                # Plotly's `line` object does not support an `opacity` attribute.
-                # Apply transparency at the trace level instead.
-                t.update(line={"width":1}, opacity=0.3)
-        if params.get("log"):
-            fig.update_yaxes(type="log")
-        st.plotly_chart(fig, use_container_width=True, height=500)
-        pin_sel = st.multiselect("固定SKU", options=comps["product_code"], default=params.get("pinned", []))
-        ex_sel = st.multiselect("除外SKU", options=comps["product_code"], default=params.get("excluded", []))
-        if st.button("Pin/Exclude更新"):
-            params['pinned'] = pin_sel
-            params['excluded'] = ex_sel
-            st.session_state.compare_params = params
-        exp_cols = ["product_code","product_name","year_sum","yoy","delta","slope_beta","abc_class","tags"]
-        st.download_button("CSVエクスポート", data=comps[exp_cols].to_csv(index=False).encode("utf-8-sig"), file_name=f"comparables_{params.get('target_code','')}_{params.get('end_month','')}.csv", mime="text/csv")
-        st.subheader("スパークライン")
-        cols = st.columns(4)
-        for i, row in comps.iterrows():
-            g = data[data['product_code'] == row['product_code']].sort_values('month')
-            fig_s = px.line(g, x='month', y='year_sum', height=120)
-            fig_s.update_layout(margin=dict(l=10,r=10,t=20,b=20), xaxis={'visible':False}, yaxis={'visible':False})
-            with cols[i % 4]:
-                st.markdown(f"**{row['product_code']} | {row['product_name']}**")
-                st.plotly_chart(fig_s, use_container_width=True, height=120)
-                st.caption(f"{int(row['year_sum']):,} / YoY {row['yoy']*100:.1f}% / Δ {int(row['delta']):,}")
+    end_m = end_month_selector(year_df, key="compare_end_month")
+
+    snapshot = latest_yearsum_snapshot(year_df, end_m)
+
+    # ---- コントロール ----
+    band_mode = st.radio(
+        "バンドモード",
+        ["金額指定", "商品指定(2)", "パーセンタイル", "順位帯", "ターゲット近傍"],
+        index=["金額指定", "商品指定(2)", "パーセンタイル", "順位帯", "ターゲット近傍"].index(params.get("band_mode", "金額指定")),
+        horizontal=True,
+    )
+
+    band_params = params.get("band_params", {})
+    if band_mode == "金額指定":
+        mn, mx = float(snapshot["year_sum"].min()), float(snapshot["year_sum"].max())
+        low, high = band_params.get("low_amount", mn), band_params.get("high_amount", mx)
+        low, high = st.slider("金額レンジ", min_value=0.0, max_value=mx, value=(low, high), step=max(mx/100,1.0))
+        band_params = {"low_amount": low, "high_amount": high}
+    elif band_mode == "商品指定(2)":
+        opts = snapshot["product_code"] + " | " + snapshot["product_name"]
+        prod_a = st.selectbox("商品A", opts, index=0)
+        prod_b = st.selectbox("商品B", opts, index=1 if len(opts) > 1 else 0)
+        band_params = {"prod_a": prod_a.split(" | ")[0], "prod_b": prod_b.split(" | ")[0]}
+    elif band_mode == "パーセンタイル":
+        p_low, p_high = band_params.get("p_low", 0), band_params.get("p_high", 100)
+        p_low, p_high = st.slider("百分位(%)", 0, 100, (int(p_low), int(p_high)))
+        band_params = {"p_low": p_low, "p_high": p_high}
+    elif band_mode == "順位帯":
+        max_rank = int(snapshot["rank"].max()) if not snapshot.empty else 1
+        r_low, r_high = band_params.get("r_low", 1), band_params.get("r_high", max_rank)
+        r_low, r_high = st.slider("順位", 1, max_rank, (int(r_low), int(r_high)))
+        band_params = {"r_low": r_low, "r_high": r_high}
+    else:  # ターゲット近傍
+        opts = snapshot["product_code"] + " | " + snapshot["product_name"]
+        tlabel = st.selectbox("基準商品", opts, index=0)
+        tcode = tlabel.split(" | ")[0]
+        by = st.radio("幅指定", ["金額", "%"], horizontal=True)
+        width_default = 100000.0 if by == "金額" else 0.1
+        width = st.number_input("幅", value=float(band_params.get("width", width_default)), step=width_default/10)
+        band_params = {"target_code": tcode, "by": "amt" if by == "金額" else "pct", "width": width}
+
+    apply_mode = st.radio("適用方式", ["バンド内のみ表示", "バンド外ゴースト"], index=["バンド内のみ表示", "バンド外ゴースト"].index(params.get("apply_mode", "バンド内のみ表示")), horizontal=True)
+
+    # 自動バンド提案ボタン
+    col_auto1, col_auto2, col_auto3 = st.columns(3)
+    with col_auto1:
+        if st.button("メディアン±10%") and not snapshot.empty:
+            med = snapshot["year_sum"].median()
+            band_mode = "金額指定"
+            band_params = {"low_amount": med*0.9, "high_amount": med*1.1}
+    with col_auto2:
+        if st.button("Top10%") and not snapshot.empty:
+            band_mode = "パーセンタイル"
+            band_params = {"p_low": 90, "p_high": 100}
+    with col_auto3:
+        if st.button("IQR") and not snapshot.empty:
+            q1 = snapshot["year_sum"].quantile(0.25)
+            q3 = snapshot["year_sum"].quantile(0.75)
+            band_mode = "金額指定"
+            band_params = {"low_amount": q1, "high_amount": q3}
+
+    params = {
+        "end_month": end_m,
+        "band_mode": band_mode,
+        "band_params": band_params,
+        "apply_mode": apply_mode,
+    }
+    st.session_state.compare_params = params
+
+    mode_map = {
+        "金額指定": "amount",
+        "商品指定(2)": "two_products",
+        "パーセンタイル": "percentile",
+        "順位帯": "rank",
+        "ターゲット近傍": "target_near",
+    }
+    low, high = resolve_band(snapshot, mode_map[band_mode], band_params)
+    codes = filter_products_by_band(snapshot, low, high)
+
+    prev_month = (datetime.strptime(end_m, "%Y-%m") - pd.DateOffset(months=1)).strftime("%Y-%m")
+    prev_snap = latest_yearsum_snapshot(year_df, prev_month)
+    prev_codes = filter_products_by_band(prev_snap, low, high)
+    new_in = set(codes) - set(prev_codes)
+    left_out = set(prev_codes) - set(codes)
+
+    # 統計バッジ
+    if codes:
+        sub = snapshot[snapshot["product_code"].isin(codes)]
+        N, M = len(sub), len(snapshot)
+        med = sub["year_sum"].median()
+        mean = sub["year_sum"].mean()
+        p10 = sub["year_sum"].quantile(0.1)
+        p90 = sub["year_sum"].quantile(0.9)
+        st.caption(f"該当 {N}/{M} 件 ( {N/M*100:.1f}% ) / 中央値 {int(med):,} / 平均 {int(mean):,} / P10 {int(p10):,} / P90 {int(p90):,}")
+
+    # ---- ヒストグラム ----
+    hist_fig = px.histogram(snapshot, x="year_sum")
+    st.plotly_chart(hist_fig, use_container_width=True, height=200)
+
+    # ---- Overlay ----
+    df_long, _ = get_yearly_series(year_df, codes)
+    fig = px.line(df_long, x="month", y="year_sum", color="product_code", hover_data=["product_name"])
+    fig.add_hrect(y0=low, y1=high, fillcolor="green", opacity=0.12, line_width=0)
+    if apply_mode == "バンド外ゴースト":
+        full_long, _ = get_yearly_series(year_df, snapshot["product_code"].tolist())
+        outside = full_long[~full_long["product_code"].isin(codes)]
+        if not outside.empty:
+            ghost = px.line(outside, x="month", y="year_sum", color="product_code").update_traces(line=dict(width=1), opacity=0.15, showlegend=False)
+            for t in ghost.data:
+                fig.add_trace(t)
+    st.plotly_chart(fig, use_container_width=True, height=500)
+
+    # PNG/CSVエクスポート
+    snap_export = snapshot[snapshot["product_code"].isin(codes)]
+    st.download_button("CSVエクスポート", data=snap_export.to_csv(index=False).encode("utf-8-sig"), file_name=f"band_snapshot_{end_m}.csv", mime="text/csv")
+    try:
+        png_bytes = fig.to_image(format="png")
+        st.download_button("PNGエクスポート", data=png_bytes, file_name=f"band_overlay_{end_m}.png", mime="image/png")
+    except Exception:
+        pass
+
+    # ---- Small Multiples ----
+    st.subheader("スモールマルチプル")
+    cols = st.columns(3)
+    for i, code in enumerate(codes):
+        g = df_long[df_long["product_code"] == code]
+        fig_s = px.line(g, x="month", y="year_sum", height=150)
+        fig_s.add_hrect(y0=low, y1=high, fillcolor="green", opacity=0.12, line_width=0)
+        with cols[i % 3]:
+            label = code
+            if code in new_in:
+                label += " 🆕"
+            st.markdown(f"**{label}**")
+            st.plotly_chart(fig_s, use_container_width=True, height=150)
+
+    if new_in or left_out:
+        st.info(f"新規侵入: {', '.join(sorted(new_in)) or 'なし'} / 離脱: {', '.join(sorted(left_out)) or 'なし'}")
 
 # 5) SKU詳細
 elif page == "SKU詳細":
@@ -477,16 +494,5 @@ elif page == "保存ビュー":
             if st.button(f"適用: {k}"):
                 st.session_state.settings.update(v.get("settings", {}))
                 st.session_state.compare_params = v.get("compare", {})
-                cp = st.session_state.compare_params
-                if cp and st.session_state.data_year is not None:
-                    filt = cp.get("filters", {})
-                    if cp.get("mode") == "rank":
-                        st.session_state.compare_results = get_comparables(
-                            st.session_state.data_year, cp.get("end_month"), cp.get("target_code"),
-                            mode=cp.get("mode"), rank_k=int(cp.get("range", 5)), filters=filt, tags_map=st.session_state.tags)
-                    else:
-                        st.session_state.compare_results = get_comparables(
-                            st.session_state.data_year, cp.get("end_month"), cp.get("target_code"),
-                            mode=cp.get("mode"), low=-float(cp.get("range", 0)), high=float(cp.get("range", 0)),
-                            filters=filt, tags_map=st.session_state.tags)
+                st.session_state.compare_results = None
                 st.success(f"ビュー「{k}」を適用しました。")

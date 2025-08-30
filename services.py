@@ -427,3 +427,120 @@ def build_indexed_series(year_df: pd.DataFrame,
             indexed[c] = (indexed[c] / b) * 100.0
     long_df = indexed.reset_index().melt(id_vars='month', var_name='product_code', value_name='index_value')
     return long_df
+
+
+# ---------- Snapshot & Band Utilities ----------
+def latest_yearsum_snapshot(df_year: pd.DataFrame, end_month: str) -> pd.DataFrame:
+    """指定した月の年計スナップショットを返す。
+
+    パラメータ
+    ----------
+    df_year : pd.DataFrame
+        `compute_year_rolling` の結果である年計ロングデータ。
+    end_month : str
+        対象とする終端月 (YYYY-MM)。
+
+    戻り値
+    ----------
+    pd.DataFrame
+        product_code, product_name, year_sum, rank, yoy, delta の列を持つ
+        スナップショット。
+    """
+    snap = df_year[df_year["month"] == end_month].copy()
+    if snap.empty:
+        return pd.DataFrame(columns=["product_code", "product_name", "year_sum", "rank", "yoy", "delta"])
+    snap = snap.dropna(subset=["year_sum"])
+    snap = snap.sort_values("year_sum", ascending=False)
+    snap["rank"] = np.arange(1, len(snap) + 1)
+    cols = ["product_code", "product_name", "year_sum", "rank", "yoy", "delta"]
+    return snap[cols]
+
+
+def resolve_band(snapshot: pd.DataFrame, mode: str, params: Dict) -> Tuple[float, float]:
+    """UIで指定されたモードとパラメータからバンド下限・上限を計算する。
+
+    mode は以下をサポートする:
+        - 'amount': 金額指定
+        - 'two_products': 2商品の年計を基準
+        - 'percentile': 百分位
+        - 'rank': 順位帯
+        - 'target_near': 基準商品近傍
+    """
+    if snapshot.empty:
+        return (np.nan, np.nan)
+
+    if mode == "amount":
+        low = params.get("low_amount", -np.inf)
+        high = params.get("high_amount", np.inf)
+    elif mode == "two_products":
+        a = snapshot[snapshot["product_code"] == params.get("prod_a")]["year_sum"].iloc[0]
+        b = snapshot[snapshot["product_code"] == params.get("prod_b")]["year_sum"].iloc[0]
+        low, high = sorted([float(a), float(b)])
+    elif mode == "percentile":
+        p_low = params.get("p_low", 0) / 100.0
+        p_high = params.get("p_high", 100) / 100.0
+        low = float(snapshot["year_sum"].quantile(p_low))
+        high = float(snapshot["year_sum"].quantile(p_high))
+    elif mode == "rank":
+        r_low = params.get("r_low", 1)
+        r_high = params.get("r_high", len(snapshot))
+        subset = snapshot[(snapshot["rank"] >= r_low) & (snapshot["rank"] <= r_high)]
+        low = float(subset["year_sum"].min())
+        high = float(subset["year_sum"].max())
+    else:  # target_near
+        row = snapshot[snapshot["product_code"] == params.get("target_code")]
+        if row.empty:
+            return (np.nan, np.nan)
+        base = float(row["year_sum"].iloc[0])
+        if params.get("by", "pct") == "amt":
+            width = float(params.get("width", 0.0))
+            low = base - width
+            high = base + width
+        else:
+            width = float(params.get("width", 0.0))
+            low = base * (1 - width)
+            high = base * (1 + width)
+    return (low, high)
+
+
+def filter_products_by_band(snapshot: pd.DataFrame, low: float, high: float) -> List[str]:
+    """年計値が指定バンドに含まれる商品コードを返す。"""
+    if snapshot.empty:
+        return []
+    cond = (snapshot["year_sum"] >= low) & (snapshot["year_sum"] <= high)
+    return snapshot[cond]["product_code"].tolist()
+
+
+def get_yearly_series(df_year: pd.DataFrame,
+                      codes: Optional[List[str]] = None,
+                      start: Optional[str] = None,
+                      end: Optional[str] = None,
+                      metric: str = "year_sum") -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """年計ロングデータから指定SKUの縦持ち・横持ちデータを取得する。
+
+    Parameters
+    ----------
+    df_year : pd.DataFrame
+        年計ロングデータ。
+    codes : list[str], optional
+        対象とする商品コードリスト。None の場合は全件。
+    start, end : str, optional
+        期間フィルタ (YYYY-MM)。
+    metric : str
+        取得する数値列名。既定は 'year_sum'。
+
+    Returns
+    -------
+    (long_df, pivot_df)
+        long_df: フィルタ後のロングデータ
+        pivot_df: 行=month, 列=product_code のピボットテーブル
+    """
+    df = df_year.copy()
+    if codes is not None:
+        df = df[df["product_code"].isin(codes)]
+    if start is not None:
+        df = df[df["month"] >= start]
+    if end is not None:
+        df = df[df["month"] <= end]
+    pivot = df.pivot(index="month", columns="product_code", values=metric).sort_index()
+    return df, pivot
