@@ -51,6 +51,7 @@ from services import (
     slopes_snapshot,
     shape_flags,
 )
+from core.chart_card import toolbar_sku_detail, build_chart_card
 
 APP_TITLE = "売上年計（12カ月移動累計）ダッシュボード"
 st.set_page_config(page_title=APP_TITLE, layout="wide", initial_sidebar_state="expanded")
@@ -251,68 +252,6 @@ def fit_line(x, y):
     ss_tot = np.sum((y - y.mean()) ** 2)
     r2 = 1 - ss_res / ss_tot if ss_tot > 0 else np.nan
     return m, b, r2
-
-
-def _plot_area_height(fig: go.Figure) -> int:
-    h = fig.layout.height or 520
-    m = fig.layout.margin or {}
-    t = getattr(m, "t", 40) or 40
-    b = getattr(m, "b", 60) or 60
-    return max(120, int(h - t - b))
-
-
-def _y_to_px(y, y0, y1, plot_h):
-    if y1 == y0:
-        y1 = y0 + 1.0
-    return float((1 - (y - y0) / (y1 - y0)) * plot_h)
-
-
-def add_latest_labels_no_overlap(
-    fig: go.Figure,
-    df_long: pd.DataFrame,
-    label_col: str = "display_name",
-    x_col: str = "month",
-    y_col: str = "year_sum",
-    max_labels: int = 12,
-    min_gap_px: int = 12,
-    alternate_side: bool = True,
-    xpad_px: int = 8,
-    font_size: int = 11,
-):
-    last = df_long.sort_values(x_col).groupby(label_col, as_index=False).tail(1)
-    if len(last) == 0:
-        return
-    cand = last.sort_values(y_col, ascending=False).head(max_labels).copy()
-    yaxis = fig.layout.yaxis
-    if getattr(yaxis, "range", None):
-        y0, y1 = yaxis.range
-    else:
-        y0, y1 = float(df_long[y_col].min()), float(df_long[y_col].max())
-    plot_h = _plot_area_height(fig)
-    cand["y_px"] = cand[y_col].apply(lambda v: _y_to_px(v, y0, y1, plot_h))
-    cand = cand.sort_values("y_px")
-    placed = []
-    for _, r in cand.iterrows():
-        base = r["y_px"]
-        if placed and base <= placed[-1] + min_gap_px:
-            base = placed[-1] + min_gap_px
-        base = float(np.clip(base, 0 + 6, plot_h - 6))
-        placed.append(base)
-        yshift = -(base - r["y_px"])
-        xshift = xpad_px if (not alternate_side or (len(placed) % 2 == 1)) else -xpad_px
-        fig.add_annotation(
-            x=r[x_col],
-            y=r[y_col],
-            text=f"{r[label_col]}：{r[y_col]:,.0f}（{pd.to_datetime(r[x_col]).strftime('%Y-%m')}）",
-            showarrow=False,
-            xanchor="left" if xshift >= 0 else "right",
-            yanchor="middle",
-            xshift=xshift,
-            yshift=yshift,
-            bgcolor="rgba(0,0,0,0)",
-            bordercolor="rgba(0,0,0,0)",
-            font=dict(size=font_size),
-        )
 
 
 NAME_MAP = {
@@ -728,15 +667,7 @@ elif page == "比較ビュー":
     df_long, _ = get_yearly_series(year_df, target_codes)
     df_long["month"] = pd.to_datetime(df_long["month"])
     df_long["display_name"] = df_long["product_name"].fillna(df_long["product_code"])
-    df_long["year_sum_disp"] = df_long["year_sum"] / scale
 
-    months_back = {"12ヶ月": 12, "24ヶ月": 24, "36ヶ月": 36}[period]
-    max_month = df_long["month"].max()
-    if pd.notna(max_month):
-        start_date = max_month - pd.DateOffset(months=months_back - 1)
-        df_long = df_long[df_long["month"] >= start_date]
-
-    # TopN 制限
     main_codes = target_codes
     max_lines = 15
     if len(main_codes) > max_lines:
@@ -748,159 +679,22 @@ elif page == "比較ビュー":
 
     df_main = df_long[df_long["product_code"].isin(main_codes)]
 
-    fig = px.line(
-        df_main,
-        x="month",
-        y="year_sum_disp",
-        color="display_name",
-        custom_data=["display_name"],
+    tb_common = dict(
+        period=period,
+        node_mode=node_mode,
+        hover_mode=hover_mode,
+        op_mode=op_mode,
+        peak_on=peak_on,
+        unit=unit,
+        enable_avoid=enable_label_avoid,
+        gap_px=label_gap_px,
+        max_labels=label_max,
+        alt_side=alternate_side,
+        slope_conf=None,
     )
-    fig.add_hrect(y0=low / scale, y1=high / scale, fillcolor="green", opacity=0.12, line_width=0)
-
-    fig.update_traces(
-        mode="lines",
-        line=dict(width=1.5),
-        opacity=0.45,
-        selector=dict(mode="lines"),
-        hovertemplate=f"<b>%{{customdata[0]}}</b><br>月：%{{x|%Y-%m}}<br>年計：%{{y:,.0f}} {unit}<extra></extra>",
-    )
-    fig.update_layout(hoverlabel=dict(bgcolor="rgba(30,30,30,0.92)", font=dict(color="#fff", size=12)))
-
-    theme_is_dark = st.get_option("theme.base") == "dark"
-    HALO = "#ffffff" if theme_is_dark else "#222222"
-    SZ = 6
-    if node_mode == "自動":
-        step = marker_step(df_main["month"])
-        df_nodes = (
-            df_main.sort_values("month")
-            .assign(_idx=df_main.sort_values("month").groupby("display_name").cumcount())
-            .query("(_idx % @step) == 0")
-        )
-    elif node_mode == "主要ノードのみ":
-        g = df_main.sort_values("month").groupby("display_name")
-        latest = g.tail(1)
-        idxmax = df_main.loc[g["year_sum"].idxmax().dropna()]
-        idxmin = df_main.loc[g["year_sum"].idxmin().dropna()]
-        ystart = g.head(1)
-        df_nodes = pd.concat([latest, idxmax, idxmin, ystart]).drop_duplicates(["display_name", "month"])
-    elif node_mode == "すべて":
-        df_nodes = df_main.copy()
-    else:
-        df_nodes = df_main.iloc[0:0].copy()
-
-    for name, d in df_nodes.groupby("display_name"):
-        fig.add_scatter(
-            x=d["month"],
-            y=d["year_sum_disp"],
-            mode="markers",
-            name=name,
-            legendgroup=name,
-            showlegend=False,
-            marker=dict(size=SZ, symbol="circle", line=dict(color=HALO, width=2), opacity=0.95),
-            hovertemplate=f"<b>%{{customdata[0]}}</b><br>月：%{{x|%Y-%m}}<br>年計：%{{y:,.0f}} {unit}<extra></extra>",
-            customdata=np.stack([d["display_name"]], axis=-1),
-        )
-
-    if node_mode != "非表示":
-        if enable_label_avoid:
-            add_latest_labels_no_overlap(
-                fig,
-                df_main,
-                label_col="display_name",
-                x_col="month",
-                y_col="year_sum_disp",
-                max_labels=label_max,
-                min_gap_px=label_gap_px,
-                alternate_side=alternate_side,
-            )
-        else:
-            for _, r in df_nodes.groupby("display_name").tail(1).iterrows():
-                fig.add_annotation(
-                    x=r["month"],
-                    y=r["year_sum_disp"],
-                    text=f"{r['year_sum_disp']:,.0f} {unit}（{r['month']:%Y-%m}）",
-                    showarrow=True,
-                    arrowhead=2,
-                    arrowsize=1,
-                    arrowwidth=1,
-                    ax=8,
-                    ay=-12,
-                    bgcolor="rgba(0,0,0,0)",
-                    bordercolor="rgba(0,0,0,0)",
-                    borderwidth=0,
-                    font=dict(size=11),
-                )
-
-    n_months = (
-        df_main["month"].max().year * 12
-        + df_main["month"].max().month
-        - df_main["month"].min().year * 12
-        - df_main["month"].min().month
-        + 1
-    ) if not df_main.empty else 0
-    dtick = "M1" if n_months <= 18 else ("M3" if n_months <= 48 else "M6")
-    fig.update_xaxes(
-        dtick=dtick,
-        tickformat="%Y-%m",
-        tickangle=-45,
-        showgrid=True,
-        rangeslider_visible=True,
-        showspikes=True,
-        spikemode="across",
-        spikesnap="cursor",
-        title_text="月（YYYY-MM）",
-    )
-    fig.update_yaxes(
-        tickformat="~,d",
-        title_text=f"売上 年計（{unit}）",
-        zeroline=True,
-        showgrid=True,
-    )
-    fig.update_layout(
-        legend_title_text="商品名",
-        legend=dict(y=1, x=1.02, yanchor="top", xanchor="left", tracegroupgap=8, itemsizing="constant"),
-        margin=dict(l=60, r=160, t=40, b=70),
-        template="plotly_dark",
-        height=500,
-        font=dict(family="Noto Sans JP, Meiryo, Arial", size=12),
-    )
-
-    drag = {"ズーム": "zoom", "パン": "pan", "選択": "select"}[op_mode]
-    fig.update_layout(dragmode=drag)
-    if hover_mode == "個別":
-        fig.update_layout(hovermode="closest")
-    else:
-        fig.update_layout(hovermode="x unified", hoverlabel=dict(align="left"))
-
-    if peak_on:
-        for name, grp in df_main.groupby("display_name"):
-            max_row = grp.loc[grp["year_sum"].idxmax()]
-            min_row = grp.loc[grp["year_sum"].idxmin()]
-            fig.add_annotation(
-                x=max_row["month"],
-                y=max_row["year_sum_disp"],
-                text=f"{max_row['year_sum_disp']:,.0f} {unit} ({max_row['month'].strftime('%Y-%m')})",
-                showarrow=False,
-                yanchor="bottom",
-                font=dict(size=9),
-                bgcolor="rgba(0,0,0,0)",
-                bordercolor="rgba(0,0,0,0)",
-                borderwidth=0,
-            )
-            fig.add_annotation(
-                x=min_row["month"],
-                y=min_row["year_sum_disp"],
-                text=f"{min_row['year_sum_disp']:,.0f} {unit} ({min_row['month'].strftime('%Y-%m')})",
-                showarrow=False,
-                yanchor="top",
-                font=dict(size=9),
-                bgcolor="rgba(0,0,0,0)",
-                bordercolor="rgba(0,0,0,0)",
-                borderwidth=0,
-            )
 
     st.markdown('<div class="chart-body">', unsafe_allow_html=True)
-    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+    fig = build_chart_card(df_main, selected_codes=None, multi_mode=True, tb=tb_common, band_range=(low, high))
     st.markdown('</div>', unsafe_allow_html=True)
     st.markdown('</section>', unsafe_allow_html=True)
 
@@ -934,6 +728,12 @@ zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配�
         st.plotly_chart(hist_fig, use_container_width=True)
 
     # ---- Small Multiples ----
+    df_nodes = df_main.iloc[0:0].copy()
+    HALO = "#ffffff" if st.get_option("theme.base") == "dark" else "#222222"
+    SZ = 6
+    dtick = "M1"
+    drag = {"ズーム": "zoom", "パン": "pan", "選択": "select"}[op_mode]
+
     st.subheader("スモールマルチプル")
     share_y = st.checkbox("Y軸共有", value=False)
     show_keynode_labels = st.checkbox("キーノードラベル表示", value=False)
@@ -944,7 +744,7 @@ zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配�
     page_codes = main_codes[start : start + per_page]
     col_count = 4
     cols = st.columns(col_count)
-    ymax = df_long[df_long["product_code"].isin(main_codes)]["year_sum_disp"].max() if share_y else None
+    ymax = df_long[df_long["product_code"].isin(main_codes)]["year_sum"].max() / UNIT_MAP[unit] if share_y else None
     for i, code in enumerate(page_codes):
         g = df_long[df_long["product_code"] == code]
         disp = g["display_name"].iloc[0] if not g.empty else code
@@ -952,7 +752,7 @@ zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配�
         fig_s = px.line(
             g,
             x="month",
-            y="year_sum_disp",
+            y="year_sum",
             color_discrete_sequence=[palette[i % len(palette)]],
             custom_data=["display_name"],
         )
@@ -963,34 +763,6 @@ zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配�
             showlegend=False,
             hovertemplate=f"<b>%{{customdata[0]}}</b><br>月：%{{x|%Y-%m}}<br>年計：%{{y:,.0f}} {unit}<extra></extra>",
         )
-        g_nodes = df_nodes[df_nodes["product_code"] == code]
-        if not g_nodes.empty:
-            fig_s.add_scatter(
-                x=g_nodes["month"],
-                y=g_nodes["year_sum_disp"],
-                mode="markers",
-                marker=dict(size=SZ, symbol="circle", line=dict(color=HALO, width=2), opacity=0.95),
-                showlegend=False,
-                hovertemplate=f"<b>%{{customdata[0]}}</b><br>月：%{{x|%Y-%m}}<br>年計：%{{y:,.0f}} {unit}<extra></extra>",
-                customdata=np.stack([g_nodes["display_name"]], axis=-1),
-            )
-            if show_keynode_labels and node_mode != "非表示":
-                last_r = g_nodes.sort_values("month").iloc[-1]
-                fig_s.add_annotation(
-                    x=last_r["month"],
-                    y=last_r["year_sum_disp"],
-                    text=f"{last_r['year_sum_disp']:,.0f} {unit}（{last_r['month']:%Y-%m}）",
-                    showarrow=True,
-                    arrowhead=2,
-                    arrowsize=1,
-                    arrowwidth=1,
-                    ax=8,
-                    ay=-12,
-                    bgcolor="rgba(0,0,0,0)",
-                    bordercolor="rgba(0,0,0,0)",
-                    borderwidth=0,
-                    font=dict(size=10),
-                )
         fig_s.update_xaxes(tickformat="%Y-%m", dtick=dtick, title_text="月（YYYY-MM）")
         fig_s.update_yaxes(tickformat="~,d", range=[0, ymax] if ymax else None, title_text=f"売上 年計（{unit}）")
         fig_s.update_layout(font=dict(family="Noto Sans JP, Meiryo, Arial", size=12))
@@ -1000,7 +772,7 @@ zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配�
             fig_s.update_layout(hovermode="closest")
         else:
             fig_s.update_layout(hovermode="x unified", hoverlabel=dict(align="left"))
-        last_val = g.sort_values("month")["year_sum_disp"].iloc[-1] if not g.empty else np.nan
+        last_val = g.sort_values("month")["year_sum"].iloc[-1] / UNIT_MAP[unit] if not g.empty else np.nan
         with cols[i % col_count]:
             st.metric(disp, f"{last_val:,.0f} {unit}" if not np.isnan(last_val) else "—")
             st.plotly_chart(
@@ -1017,21 +789,16 @@ elif page == "SKU詳細":
     end_m = end_month_selector(st.session_state.data_year, key="end_month_detail")
     prods = st.session_state.data_year[["product_code", "product_name"]].drop_duplicates().sort_values("product_code")
     mode = st.radio("表示モード", ["単品", "複数比較"], horizontal=True)
+    tb = toolbar_sku_detail(multi_mode=(mode == "複数比較"))
+    df_year = st.session_state.data_year.copy()
+    df_year["display_name"] = df_year["product_name"].fillna(df_year["product_code"])
+
     if mode == "単品":
         prod_label = st.selectbox("SKU選択", options=prods["product_code"] + " | " + prods["product_name"])
         code = prod_label.split(" | ")[0]
+        build_chart_card(df_year, selected_codes=[code], multi_mode=False, tb=tb)
 
-        g_m = st.session_state.data_monthly[st.session_state.data_monthly["product_code"] == code].sort_values("month")
-        g_y = st.session_state.data_year[st.session_state.data_year["product_code"] == code].sort_values("month")
-
-        c1, c2 = st.columns(2)
-        with c1:
-            fig1 = px.line(g_m, x="month", y="sales_amount_jpy", title="単月 売上推移", markers=True)
-            st.plotly_chart(fig1, use_container_width=True, height=350, config=PLOTLY_CONFIG)
-        with c2:
-            fig2 = px.line(g_y, x="month", y="year_sum", title="年計 推移", markers=True)
-            st.plotly_chart(fig2, use_container_width=True, height=350, config=PLOTLY_CONFIG)
-
+        g_y = df_year[df_year["product_code"] == code].sort_values("month")
         row = g_y[g_y["month"] == end_m]
         if not row.empty:
             rr = row.iloc[0]
@@ -1049,15 +816,13 @@ elif page == "SKU詳細":
             st.session_state.tags[code] = [t.strip() for t in tags_str.split(",") if t.strip()]
             st.success("保存しました")
         if c2.button("CSVでエクスポート"):
-            meta = pd.DataFrame(
-                [
-                    {
-                        "product_code": code,
-                        "note": st.session_state.notes.get(code, ""),
-                        "tags": ",".join(st.session_state.tags.get(code, [])),
-                    }
-                ]
-            )
+            meta = pd.DataFrame([
+                {
+                    "product_code": code,
+                    "note": st.session_state.notes.get(code, ""),
+                    "tags": ",".join(st.session_state.tags.get(code, [])),
+                }
+            ])
             st.download_button(
                 "ダウンロード",
                 data=meta.to_csv(index=False).encode("utf-8-sig"),
@@ -1068,26 +833,11 @@ elif page == "SKU詳細":
         opts = (prods["product_code"] + " | " + prods["product_name"]).tolist()
         sel = st.multiselect("SKU選択（最大12件）", options=opts, max_selections=12)
         codes = [s.split(" | ")[0] for s in sel]
-        if codes:
-            df_long, _ = get_yearly_series(st.session_state.data_year, codes)
-            df_long["display_name"] = df_long["product_name"].fillna(df_long["product_code"])
-            fig = px.line(df_long, x="month", y="year_sum", color="display_name")
-            fig.update_layout(hovermode="x unified")
-            st.plotly_chart(fig, use_container_width=True, height=350, config=PLOTLY_CONFIG)
-
-            fig_sm = px.line(
-                df_long,
-                x="month",
-                y="year_sum",
-                color="display_name",
-                facet_col="display_name",
-                facet_col_wrap=3,
-            )
-            fig_sm.update_layout(showlegend=False)
-            st.plotly_chart(fig_sm, use_container_width=True, height=350, config=PLOTLY_CONFIG)
-
-            snap = latest_yearsum_snapshot(st.session_state.data_year, end_m)
-            snap = snap[snap["product_code"].isin(codes)]
+        if codes or (tb.get("slope_conf") and tb["slope_conf"].get("quick") != "なし"):
+            build_chart_card(df_year, selected_codes=codes, multi_mode=True, tb=tb)
+            snap = latest_yearsum_snapshot(df_year, end_m)
+            if codes:
+                snap = snap[snap["product_code"].isin(codes)]
             st.dataframe(
                 snap[["product_code", "product_name", "year_sum", "yoy", "delta"]],
                 use_container_width=True,
