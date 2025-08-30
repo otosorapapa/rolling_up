@@ -118,7 +118,14 @@ def toolbar_sku_detail(multi_mode: bool):
             )
             ui["quick"] = quick
         with k:
-            n_win = st.slider("傾きウィンドウ（月）", 3, 12, ui.get("n_win", 6), 1)
+            n_win = st.slider(
+                "傾きウィンドウ（月）",
+                0,
+                12,
+                ui.get("n_win", 6),
+                1,
+                help="0=自動（系列の全期間で判定）",
+            )
             ui["n_win"] = n_win
             cmp_opts = ["以上", "未満"]
             cmp_mode = st.radio(
@@ -207,9 +214,10 @@ def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None):
                 quick_codes = snapshot["product_code"]
             codes_by_slope = codes_by_slope & set(quick_codes)
         if sc["shape_pick"] != "（なし）":
+            eff_n = sc["n_win"] if sc["n_win"] > 0 else 12
             sh = shape_flags(
                 dfp,
-                window=max(8, sc["n_win"] * 2),
+                window=max(6, eff_n * 2),
                 alpha_ratio=0.02 * (1.0 - sc["sens"]),
                 amp_ratio=0.06 * (1.0 - sc["sens"]),
             )

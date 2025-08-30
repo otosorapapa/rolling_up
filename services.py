@@ -595,12 +595,21 @@ def trend_last6(series: pd.Series) -> dict:
 
 
 def slope_last_n(y: pd.Series, n: int = 6):
-    """末尾n点で単回帰の傾き（円/月）と%/月を返す。"""
-    s = y.dropna().tail(n)
-    if len(s) < 3:
-        return np.nan, np.nan
-    x = np.arange(len(s), dtype=float)
-    m, _ = np.polyfit(x, s.values.astype(float), 1)
+    """末尾n点で単回帰の傾き（円/月）と%/月を返す。
+
+    n<=0（またはNone）の場合は全期間を対象とし、
+    データ点が2点未満ならNaNを返す。
+    """
+    s = y.dropna()
+    s = s if (n is None or n <= 0) else s.tail(n)
+    L = len(s)
+    if L < 2:
+        return np.nan, np.nan  # データが足りない
+    x = np.arange(L, dtype=float)
+    if L == 2:
+        m = s.iloc[1] - s.iloc[0]
+    else:
+        m, _ = np.polyfit(x, s.values.astype(float), 1)
     ratio = m / max(1.0, s.mean())  # %/月相当
     return float(m), float(ratio)
 
