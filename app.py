@@ -435,7 +435,8 @@ elif page == "比較ビュー":
 
     # ---- ヒストグラム ----
     hist_fig = px.histogram(snapshot, x="year_sum")
-    st.plotly_chart(hist_fig, use_container_width=True, height=200, config=PLOTLY_CONFIG)
+    with st.expander("分布（オプション）", expanded=False):
+        st.plotly_chart(hist_fig, use_container_width=True, height=200, config=PLOTLY_CONFIG)
 
     ghost_outside = []
     if apply_mode == "バンド外ゴースト":
@@ -445,33 +446,40 @@ elif page == "比較ビュー":
     st.markdown(
         """
 <style>
-.toolbar-sticky { position: sticky; top: 0; z-index: 999;
-  background: var(--background-color,#0f172a); padding:.5rem .75rem;
-  border-bottom:1px solid rgba(255,255,255,.08); }
-.toolbar-row { display:flex; gap:.75rem; flex-wrap:wrap; align-items:center; }
-.stSlider, .stSelectbox, .stRadio, .stCheckbox { margin-bottom: 0 !important; }
+/* カード（グラフ＋ツールバー） */
+.chart-card { position: relative; margin: .25rem 0 1rem; border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.08); background: var(--background-color,#0f172a); }
+/* グラフ直上ツールバー：カード内でsticky */
+.chart-toolbar { position: sticky; top: -1px; z-index: 5;
+  display: flex; gap: .6rem; flex-wrap: wrap; align-items: center;
+  padding: .4rem .6rem; border-bottom: 1px solid rgba(255,255,255,.08); }
+/* コンパクト化：Streamlit標準余白を消す */
+.chart-toolbar .stRadio, .chart-toolbar .stSelectbox, .chart-toolbar .stSlider,
+.chart-toolbar .stMultiSelect, .chart-toolbar .stCheckbox { margin-bottom: 0 !important; }
+.chart-toolbar [data-baseweb="slider"] { padding-top: .1rem; padding-bottom: .1rem; }
+.chart-body { padding: .3rem .4rem .6rem; }
 </style>
         """,
         unsafe_allow_html=True,
     )
-    st.markdown('<div class="toolbar-sticky">', unsafe_allow_html=True)
-    with st.container():
-        c1, c2, c3, c4, c5 = st.columns([1.4, 1.8, 1.1, 1.2, 0.9])
-        with c1:
-            period = st.radio("期間", ["12ヶ月", "24ヶ月", "36ヶ月"], index=1, horizontal=True)
-        with c2:
-            node_mode = st.radio("ノード表示", ["自動", "主要ノードのみ", "すべて", "非表示"], index=0, horizontal=True)
-        with c3:
-            hover_mode = st.radio("ホバー表示", ["個別", "同月まとめ"], index=1, horizontal=True)
-        with c4:
-            op_mode = st.radio("操作モード", ["パン", "ズーム", "選択"], index=0, horizontal=True)
-        with c5:
-            peak_on = st.checkbox("ピーク表示", value=False)
-        c6, c7 = st.columns([1.6, 2.4])
-        with c6:
-            pos_thr = st.slider("傾きしきい値（%/月）", 0.01, 0.10, 0.03, 0.01)
-        with c7:
-            group_view = st.radio("表示グループ", ["すべて", "明日の商品", "昨日の商品", "横ばい"], index=0, horizontal=True)
+    st.markdown('<section class="chart-card" id="line-compare">', unsafe_allow_html=True)
+    st.markdown('<div class="chart-toolbar">', unsafe_allow_html=True)
+    c1, c2, c3, c4, c5 = st.columns([1.4, 1.8, 1.1, 1.2, 0.9])
+    with c1:
+        period = st.radio("期間", ["12ヶ月", "24ヶ月", "36ヶ月"], index=1, horizontal=True)
+    with c2:
+        node_mode = st.radio("ノード表示", ["自動", "主要ノードのみ", "すべて", "非表示"], index=0, horizontal=True)
+    with c3:
+        hover_mode = st.radio("ホバー表示", ["個別", "同月まとめ"], index=1, horizontal=True)
+    with c4:
+        op_mode = st.radio("操作モード", ["パン", "ズーム", "選択"], index=0, horizontal=True)
+    with c5:
+        peak_on = st.checkbox("ピーク表示", value=False)
+    c6, c7 = st.columns([1.6, 2.4])
+    with c6:
+        pos_thr = st.slider("傾きしきい値（%/月）", 0.01, 0.10, 0.03, 0.01)
+    with c7:
+        group_view = st.radio("表示グループ", ["すべて", "明日の商品", "昨日の商品", "横ばい"], index=0, horizontal=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
     # ---- トレンド分類 ----
@@ -710,11 +718,13 @@ elif page == "比較ビュー":
                 borderwidth=0,
             )
 
+    st.markdown('<div class="chart-body">', unsafe_allow_html=True)
     st.plotly_chart(
         fig,
         use_container_width=True,
         config=PLOTLY_CONFIG,
     )
+    st.markdown('</div>', unsafe_allow_html=True)
     st.caption("凡例クリックで表示切替、ダブルクリックで単独表示。ドラッグでズーム/パン、右上メニューからPNG/CSV取得可。")
 
     # PNG/CSVエクスポート
@@ -730,6 +740,8 @@ elif page == "比較ビュー":
         st.download_button("PNGエクスポート", data=png_bytes, file_name=f"band_overlay_{end_m}.png", mime="image/png")
     except Exception:
         pass
+
+    st.markdown('</section>', unsafe_allow_html=True)
 
     # ---- Small Multiples ----
     st.subheader("スモールマルチプル")
