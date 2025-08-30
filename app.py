@@ -263,10 +263,18 @@ elif page == "比較ビュー":
         low, high = st.slider("金額レンジ", min_value=0.0, max_value=mx, value=(low, high), step=max(mx/100,1.0))
         band_params = {"low_amount": low, "high_amount": high}
     elif band_mode == "商品指定(2)":
-        opts = snapshot["product_code"] + " | " + snapshot["product_name"]
+        opts = (
+            snapshot["product_code"].fillna("").astype(str)
+            + " | "
+            + snapshot["product_name"].fillna("").astype(str)
+        ).tolist()
+        opts = [o for o in opts if o.strip() != "|"]
         prod_a = st.selectbox("商品A", opts, index=0)
         prod_b = st.selectbox("商品B", opts, index=1 if len(opts) > 1 else 0)
-        band_params = {"prod_a": prod_a.split(" | ")[0], "prod_b": prod_b.split(" | ")[0]}
+        band_params = {
+            "prod_a": prod_a.split(" | ")[0],
+            "prod_b": prod_b.split(" | ")[0],
+        }
     elif band_mode == "パーセンタイル":
         p_low, p_high = band_params.get("p_low", 0), band_params.get("p_high", 100)
         p_low, p_high = st.slider("百分位(%)", 0, 100, (int(p_low), int(p_high)))
