@@ -275,10 +275,10 @@ def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None):
     if tb["enable_avoid"]:
         add_latest_labels_no_overlap(
             fig,
-            dfp.rename(columns={"year_sum_disp": "year_sum"}),
+            dfp,
             label_col="display_name",
             x_col="month",
-            y_col="year_sum",
+            y_col="year_sum_disp",
             max_labels=tb["max_labels"],
             min_gap_px=tb["gap_px"],
             alternate_side=tb["alt_side"],
