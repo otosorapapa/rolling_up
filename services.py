@@ -564,3 +564,27 @@ def top_growth_codes(df_year: pd.DataFrame, end_month: str, window: int = 6, top
     diff = pivot.iloc[-1] - pivot.iloc[0]
     diff = diff.dropna().sort_values(ascending=False)
     return diff.head(top).index.tolist()
+
+
+def trend_last6(series: pd.Series) -> dict:
+    """直近6か月のトレンドスコアを計算する。
+
+    Parameters
+    ----------
+    series : pd.Series
+        月次の年計値。昇順に並んでいる必要がある。
+
+    Returns
+    -------
+    dict
+        slope: 月あたり増加額
+        ratio: 平均年計に対する傾きの比率
+        group: プレースホルダー（分類は呼び出し側で実施）
+    """
+    s = series.dropna().tail(6)
+    if len(s) < 3:
+        return {"slope": 0.0, "ratio": 0.0, "group": "横ばい"}
+    x = np.arange(len(s))
+    slope = np.polyfit(x, s.values, 1)[0]
+    ratio = slope / max(1.0, s.mean())
+    return {"slope": float(slope), "ratio": float(ratio), "group": None}
