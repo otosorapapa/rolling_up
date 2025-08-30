@@ -1,6 +1,7 @@
 
 import io
 import json
+import math
 from datetime import datetime
 from typing import Optional, List
 
@@ -23,6 +24,7 @@ from services import (
     resolve_band,
     filter_products_by_band,
     get_yearly_series,
+    top_growth_codes,
 )
 
 APP_TITLE = "売上年計（12カ月移動累計）ダッシュボード"
@@ -247,6 +249,11 @@ elif page == "比較ビュー":
     end_m = end_month_selector(year_df, key="compare_end_month")
 
     snapshot = latest_yearsum_snapshot(year_df, end_m)
+    snapshot["display_name"] = snapshot["product_name"].fillna(snapshot["product_code"])
+
+    search = st.text_input("検索ボックス", "")
+    if search:
+        snapshot = snapshot[snapshot["display_name"].str.contains(search, case=False, na=False)]
 
     # ---- コントロール ----
     band_mode = st.radio(
@@ -257,43 +264,41 @@ elif page == "比較ビュー":
     )
 
     band_params = params.get("band_params", {})
-    if band_mode == "金額指定":
+    if band_mode == "金額指定" and not snapshot.empty:
         mn, mx = float(snapshot["year_sum"].min()), float(snapshot["year_sum"].max())
         low, high = band_params.get("low_amount", mn), band_params.get("high_amount", mx)
         low, high = st.slider("金額レンジ", min_value=0.0, max_value=mx, value=(low, high), step=max(mx/100,1.0))
         band_params = {"low_amount": low, "high_amount": high}
-    elif band_mode == "商品指定(2)":
-        opts = (
-            snapshot["product_code"].fillna("").astype(str)
-            + " | "
-            + snapshot["product_name"].fillna("").astype(str)
-        ).tolist()
+    elif band_mode == "商品指定(2)" and not snapshot.empty:
+        opts = (snapshot["product_code"].fillna("") + " | " + snapshot["display_name"].fillna("")).tolist()
         opts = [o for o in opts if o.strip() != "|"]
         prod_a = st.selectbox("商品A", opts, index=0)
         prod_b = st.selectbox("商品B", opts, index=1 if len(opts) > 1 else 0)
-        band_params = {
-            "prod_a": prod_a.split(" | ")[0],
-            "prod_b": prod_b.split(" | ")[0],
-        }
-    elif band_mode == "パーセンタイル":
+        band_params = {"prod_a": prod_a.split(" | ")[0], "prod_b": prod_b.split(" | ")[0]}
+    elif band_mode == "パーセンタイル" and not snapshot.empty:
         p_low, p_high = band_params.get("p_low", 0), band_params.get("p_high", 100)
         p_low, p_high = st.slider("百分位(%)", 0, 100, (int(p_low), int(p_high)))
         band_params = {"p_low": p_low, "p_high": p_high}
-    elif band_mode == "順位帯":
+    elif band_mode == "順位帯" and not snapshot.empty:
         max_rank = int(snapshot["rank"].max()) if not snapshot.empty else 1
         r_low, r_high = band_params.get("r_low", 1), band_params.get("r_high", max_rank)
         r_low, r_high = st.slider("順位", 1, max_rank, (int(r_low), int(r_high)))
         band_params = {"r_low": r_low, "r_high": r_high}
-    else:  # ターゲット近傍
-        opts = snapshot["product_code"] + " | " + snapshot["product_name"]
-        tlabel = st.selectbox("基準商品", opts, index=0)
-        tcode = tlabel.split(" | ")[0]
+    else:
+        opts = (snapshot["product_code"] + " | " + snapshot["display_name"]).tolist()
+        tlabel = st.selectbox("基準商品", opts, index=0) if opts else ""
+        tcode = tlabel.split(" | ")[0] if tlabel else ""
         by = st.radio("幅指定", ["金額", "%"], horizontal=True)
         width_default = 100000.0 if by == "金額" else 0.1
         width = st.number_input("幅", value=float(band_params.get("width", width_default)), step=width_default/10)
         band_params = {"target_code": tcode, "by": "amt" if by == "金額" else "pct", "width": width}
 
-    apply_mode = st.radio("適用方式", ["バンド内のみ表示", "バンド外ゴースト"], index=["バンド内のみ表示", "バンド外ゴースト"].index(params.get("apply_mode", "バンド内のみ表示")), horizontal=True)
+    apply_mode = st.radio(
+        "適用方式",
+        ["バンド内のみ表示", "バンド外ゴースト"],
+        index=["バンド内のみ表示", "バンド外ゴースト"].index(params.get("apply_mode", "バンド内のみ表示")),
+        horizontal=True,
+    )
 
     # 自動バンド提案ボタン
     col_auto1, col_auto2, col_auto3 = st.columns(3)
@@ -301,7 +306,7 @@ elif page == "比較ビュー":
         if st.button("メディアン±10%") and not snapshot.empty:
             med = snapshot["year_sum"].median()
             band_mode = "金額指定"
-            band_params = {"low_amount": med*0.9, "high_amount": med*1.1}
+            band_params = {"low_amount": med * 0.9, "high_amount": med * 1.1}
     with col_auto2:
         if st.button("Top10%") and not snapshot.empty:
             band_mode = "パーセンタイル"
@@ -331,6 +336,28 @@ elif page == "比較ビュー":
     low, high = resolve_band(snapshot, mode_map[band_mode], band_params)
     codes = filter_products_by_band(snapshot, low, high)
 
+    quick = st.radio(
+        "クイック絞り込み",
+        ["なし", "Top5", "Top10", "最新YoY上位", "直近6M伸長上位"],
+        horizontal=True,
+    )
+    if quick == "Top5":
+        codes = snapshot.nlargest(5, "year_sum")["product_code"].tolist()
+    elif quick == "Top10":
+        codes = snapshot.nlargest(10, "year_sum")["product_code"].tolist()
+    elif quick == "最新YoY上位":
+        codes = (
+            snapshot.dropna(subset=["yoy"]).sort_values("yoy", ascending=False).head(10)["product_code"].tolist()
+        )
+    elif quick == "直近6M伸長上位":
+        codes = top_growth_codes(year_df, end_m, window=6, top=10)
+
+    pin_opts = ["(なし)"] + (snapshot["product_code"] + " | " + snapshot["display_name"]).tolist()
+    pin_label = st.selectbox("基準商品ピン留め", pin_opts, index=0)
+    pin_code = pin_label.split(" | ")[0] if pin_label != "(なし)" else None
+    if pin_code and pin_code not in codes:
+        codes.insert(0, pin_code)
+
     prev_month = (datetime.strptime(end_m, "%Y-%m") - pd.DateOffset(months=1)).strftime("%Y-%m")
     prev_snap = latest_yearsum_snapshot(year_df, prev_month)
     prev_codes = filter_products_by_band(prev_snap, low, high)
@@ -351,46 +378,71 @@ elif page == "比較ビュー":
     hist_fig = px.histogram(snapshot, x="year_sum")
     st.plotly_chart(hist_fig, use_container_width=True, height=200)
 
+    ghost_outside = []
+    if apply_mode == "バンド外ゴースト":
+        ghost_outside = snapshot[~snapshot["product_code"].isin(codes)]["product_code"].tolist()
+    all_codes = codes + ghost_outside
+
     # ---- Overlay ----
-    df_long, _ = get_yearly_series(year_df, codes)
+    df_long, _ = get_yearly_series(year_df, all_codes)
     df_long["month"] = pd.to_datetime(df_long["month"])
     df_long["display_name"] = df_long["product_name"].fillna(df_long["product_code"])
+
+    # 期間プリセット
+    period = st.radio("期間", ["12ヶ月", "24ヶ月", "36ヶ月"], index=1, horizontal=True)
+    months_back = {"12ヶ月": 12, "24ヶ月": 24, "36ヶ月": 36}[period]
+    max_month = df_long["month"].max()
+    if pd.notna(max_month):
+        start_date = max_month - pd.DateOffset(months=months_back - 1)
+        df_long = df_long[df_long["month"] >= start_date]
+
+    # TopN 制限
+    main_codes, ghost_codes = codes, ghost_outside.copy()
+    max_lines = 15
+    if len(codes) > max_lines:
+        top_order = (
+            snapshot[snapshot["product_code"].isin(codes)]
+            .sort_values("year_sum", ascending=False)["product_code"].tolist()
+        )
+        main_codes = top_order[:max_lines]
+        if pin_code and pin_code not in main_codes:
+            main_codes = main_codes[: max_lines - 1] + [pin_code]
+        ghost_codes = ghost_outside + [c for c in codes if c not in main_codes]
+
+    df_main = df_long[df_long["product_code"].isin(main_codes)]
     fig = px.line(
-        df_long,
+        df_main,
         x="month",
         y="year_sum",
         color="display_name",
         custom_data=["display_name"],
     )
     fig.add_hrect(y0=low, y1=high, fillcolor="green", opacity=0.12, line_width=0)
-    if apply_mode == "バンド外ゴースト":
-        full_long, _ = get_yearly_series(year_df, snapshot["product_code"].tolist())
-        full_long["month"] = pd.to_datetime(full_long["month"])
-        full_long["display_name"] = full_long["product_name"].fillna(full_long["product_code"])
-        outside = full_long[~full_long["product_code"].isin(codes)]
-        if not outside.empty:
-            ghost = px.line(
-                outside,
-                x="month",
-                y="year_sum",
-                color="display_name",
-                custom_data=["display_name"],
-            ).update_traces(
-                line=dict(width=1),
-                opacity=0.15,
-                showlegend=False,
-                hovertemplate="<b>%{customdata[0]}</b><br>%{x|%Y-%m}<br>年計：%{y:,.0f} 円",
-            )
-            for t in ghost.data:
-                fig.add_trace(t)
+
+    if ghost_codes:
+        df_ghost = df_long[df_long["product_code"].isin(ghost_codes)]
+        ghost_fig = px.line(
+            df_ghost,
+            x="month",
+            y="year_sum",
+            color="display_name",
+            custom_data=["display_name"],
+        ).update_traces(
+            line=dict(width=1.5, color="gray"),
+            opacity=0.15,
+            showlegend=False,
+            hovertemplate="<b>%{customdata[0]}</b><br>%{x|%Y-%m}<br>年計：%{y:,.0f} 円",
+        )
+        for t in ghost_fig.data:
+            fig.add_trace(t)
 
     n_months = (
-        df_long["month"].max().year * 12
-        + df_long["month"].max().month
-        - df_long["month"].min().year * 12
-        - df_long["month"].min().month
+        df_main["month"].max().year * 12
+        + df_main["month"].max().month
+        - df_main["month"].min().year * 12
+        - df_main["month"].min().month
         + 1
-    )
+    ) if not df_main.empty else 0
     dtick = "M1" if n_months <= 18 else ("M3" if n_months <= 48 else "M6")
     fig.update_xaxes(
         dtick=dtick,
@@ -410,30 +462,24 @@ elif page == "比較ビュー":
     )
     fig.update_layout(
         hovermode="x unified",
+        dragmode="pan",
         legend_title_text="商品名",
-        legend=dict(
-            orientation="v",
-            y=1,
-            x=1.02,
-            yanchor="top",
-            xanchor="left",
-            tracegroupgap=8,
-        ),
-        margin=dict(l=60, r=140, t=40, b=60),
+        legend=dict(y=1, x=1.02, yanchor="top", xanchor="left", tracegroupgap=8, itemsizing="constant"),
+        margin=dict(l=60, r=160, t=40, b=70),
         template="plotly_dark",
-        paper_bgcolor="#0f172a",
-        plot_bgcolor="#0f172a",
         height=500,
     )
-    fig.update_traces(
-        mode="lines+markers",
-        line=dict(width=2),
-        marker=dict(size=4),
-        hovertemplate="<b>%{customdata[0]}</b><br>%{x|%Y-%m}<br>年計：%{y:,.0f} 円",
-        selector=dict(showlegend=True),
-    )
+    fig.update_traces(mode="lines", line=dict(width=1.5), opacity=0.45, selector=dict(name=".*"))
 
-    last_df = df_long.sort_values("month").groupby("display_name").tail(1)
+    pin_name = None
+    if pin_code:
+        row = snapshot[snapshot["product_code"] == pin_code]
+        if not row.empty:
+            pin_name = row["display_name"].iloc[0]
+    if pin_name:
+        fig.for_each_trace(lambda t: t.update(line=dict(width=3), opacity=1.0) if t.name == pin_name else None)
+
+    last_df = df_main.sort_values("month").groupby("display_name").tail(1)
     for idx, r in last_df.iterrows():
         yshift = 8 if idx % 2 == 0 else -8
         fig.add_annotation(
@@ -447,15 +493,42 @@ elif page == "比較ビュー":
             yshift=yshift,
         )
 
+    if st.checkbox("ピーク表示"):
+        for name, grp in df_main.groupby("display_name"):
+            max_row = grp.loc[grp["year_sum"].idxmax()]
+            min_row = grp.loc[grp["year_sum"].idxmin()]
+            fig.add_annotation(
+                x=max_row["month"],
+                y=max_row["year_sum"],
+                text=f"{max_row['year_sum']:,.0f} ({max_row['month'].strftime('%Y-%m')})",
+                showarrow=False,
+                yanchor="bottom",
+                font=dict(size=9),
+            )
+            fig.add_annotation(
+                x=min_row["month"],
+                y=min_row["year_sum"],
+                text=f"{min_row['year_sum']:,.0f} ({min_row['month'].strftime('%Y-%m')})",
+                showarrow=False,
+                yanchor="top",
+                font=dict(size=9),
+            )
+
     st.plotly_chart(
         fig,
         use_container_width=True,
         config={"displaylogo": False, "toImageButtonOptions": {"format": "png"}},
     )
+    st.caption("凡例クリックで表示切替、ダブルクリックで単独表示。ドラッグでズーム/パン、右上メニューからPNG/CSV取得可。")
 
     # PNG/CSVエクスポート
-    snap_export = snapshot[snapshot["product_code"].isin(codes)]
-    st.download_button("CSVエクスポート", data=snap_export.to_csv(index=False).encode("utf-8-sig"), file_name=f"band_snapshot_{end_m}.csv", mime="text/csv")
+    snap_export = snapshot[snapshot["product_code"].isin(main_codes)]
+    st.download_button(
+        "CSVエクスポート",
+        data=snap_export.to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"band_snapshot_{end_m}.csv",
+        mime="text/csv",
+    )
     try:
         png_bytes = fig.to_image(format="png")
         st.download_button("PNGエクスポート", data=png_bytes, file_name=f"band_overlay_{end_m}.png", mime="image/png")
@@ -464,35 +537,36 @@ elif page == "比較ビュー":
 
     # ---- Small Multiples ----
     st.subheader("スモールマルチプル")
-    cols = st.columns(3)
-    for i, code in enumerate(codes):
+    share_y = st.checkbox("Y軸共有", value=False)
+    per_page = st.radio("1ページ表示枚数", [8, 12], horizontal=True, index=0)
+    total_pages = max(1, math.ceil(len(main_codes) / per_page))
+    page_idx = st.number_input("ページ", min_value=1, max_value=total_pages, value=1)
+    start = (page_idx - 1) * per_page
+    page_codes = main_codes[start : start + per_page]
+    col_count = 4
+    cols = st.columns(col_count)
+    ymax = df_long[df_long["product_code"].isin(main_codes)]["year_sum"].max() if share_y else None
+    for i, code in enumerate(page_codes):
         g = df_long[df_long["product_code"] == code]
         disp = g["display_name"].iloc[0] if not g.empty else code
         fig_s = px.line(
             g,
             x="month",
             y="year_sum",
-            color="display_name",
-            height=150,
+            color_discrete_sequence=[fig.layout.colorway[i % len(fig.layout.colorway)]],
             custom_data=["display_name"],
         )
-        fig_s.add_hrect(y0=low, y1=high, fillcolor="green", opacity=0.12, line_width=0)
+        fig_s.update_traces(mode="lines", line=dict(width=1.5), opacity=0.8, showlegend=False,
+                            hovertemplate="<b>%{customdata[0]}</b><br>%{x|%Y-%m}<br>年計：%{y:,.0f} 円")
         fig_s.update_xaxes(tickformat="%Y-%m", dtick="M3")
-        fig_s.update_yaxes(tickformat="~,d")
-        fig_s.update_traces(
-            mode="lines+markers",
-            line=dict(width=2),
-            marker=dict(size=4),
-            hovertemplate="<b>%{customdata[0]}</b><br>%{x|%Y-%m}<br>年計：%{y:,.0f} 円",
-        )
-        with cols[i % 3]:
-            label = disp
-            if code in new_in:
-                label += " 🆕"
-            st.markdown(f"**{label}**")
+        fig_s.update_yaxes(tickformat="~,d", range=[0, ymax] if ymax else None)
+        last_val = g.sort_values("month")["year_sum"].iloc[-1] if not g.empty else np.nan
+        with cols[i % col_count]:
+            st.metric(disp, f"{last_val:,.0f}" if not np.isnan(last_val) else "—")
             st.plotly_chart(
                 fig_s,
                 use_container_width=True,
+                height=150,
                 config={"displaylogo": False, "toImageButtonOptions": {"format": "png"}},
             )
 
