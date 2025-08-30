@@ -549,3 +549,18 @@ def get_yearly_series(df_year: pd.DataFrame,
         aggfunc="sum",
     ).sort_index()
     return df, pivot
+
+
+def top_growth_codes(df_year: pd.DataFrame, end_month: str, window: int = 6, top: int = 10) -> List[str]:
+    """直近windowカ月の伸長上位商品コードを返す。"""
+    if df_year.empty:
+        return []
+    end_dt = pd.to_datetime(end_month)
+    start_dt = end_dt - pd.DateOffset(months=window)
+    sub = df_year[(pd.to_datetime(df_year["month"]) >= start_dt) & (pd.to_datetime(df_year["month"]) <= end_dt)]
+    pivot = sub.pivot_table(index="month", columns="product_code", values="year_sum").sort_index()
+    if pivot.empty or len(pivot) < 2:
+        return []
+    diff = pivot.iloc[-1] - pivot.iloc[0]
+    diff = diff.dropna().sort_values(ascending=False)
+    return diff.head(top).index.tolist()
