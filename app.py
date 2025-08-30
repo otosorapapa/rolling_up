@@ -11,6 +11,9 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 
+# Apply colorblind-friendly palette across figures
+px.defaults.color_discrete_sequence = px.colors.qualitative.Safe
+
 PLOTLY_CONFIG = {
     "locale": "ja",
     "displaylogo": False,
@@ -78,6 +81,20 @@ if "compare_params" not in st.session_state:
 if "compare_results" not in st.session_state:
     st.session_state.compare_results = None
 
+# track user interactions and global filters
+if "click_log" not in st.session_state:
+    st.session_state.click_log = {}
+if "filters" not in st.session_state:
+    st.session_state.filters = {}
+
+# currency unit scaling factors
+UNIT_MAP = {"円": 1, "千円": 1_000, "百万円": 1_000_000}
+
+
+def log_click(name: str):
+    """Increment click count for command bar actions."""
+    st.session_state.click_log[name] = st.session_state.click_log.get(name, 0) + 1
+
 
 # ---------------- Helpers ----------------
 def require_data():
@@ -135,6 +152,14 @@ def download_pdf_overview(kpi: dict, top_df: pd.DataFrame, filename: str) -> byt
     c.save()
     buffer.seek(0)
     return buffer.getvalue()
+
+
+def format_amount(val: Optional[float], unit: str) -> str:
+    """Format a numeric value according to currency unit."""
+    if val is None or (isinstance(val, float) and math.isnan(val)):
+        return "—"
+    scale = UNIT_MAP.get(unit, 1)
+    return f"{val/scale:,.0f} {unit}"
 
 
 def marker_step(dates, target_points=24):
@@ -387,31 +412,71 @@ elif page == "ダッシュボード":
     require_data()
     st.header("ダッシュボード")
 
+    # Command bar (期間/単位)
+    with st.container():
+        col_p, col_u = st.columns([1, 1])
+        with col_p:
+            st.selectbox(
+                "期間",
+                options=[12, 24, 36],
+                index=[12, 24, 36].index(st.session_state.settings.get("window", 12)),
+                key="cmd_period",
+                on_change=lambda: log_click("期間"),
+            )
+        with col_u:
+            st.selectbox(
+                "単位",
+                options=list(UNIT_MAP.keys()),
+                index=list(UNIT_MAP.keys()).index(st.session_state.settings.get("currency_unit", "円")),
+                key="cmd_unit",
+                on_change=lambda: log_click("単位"),
+            )
+
+    # update settings and filter log
+    st.session_state.settings["window"] = st.session_state.cmd_period
+    st.session_state.settings["currency_unit"] = st.session_state.cmd_unit
+    st.session_state.filters.update({
+        "period": st.session_state.cmd_period,
+        "currency_unit": st.session_state.cmd_unit,
+    })
+
     end_m = end_month_selector(st.session_state.data_year, key="end_month_dash")
 
     # KPI
     kpi = aggregate_overview(st.session_state.data_year, end_m)
     hhi = compute_hhi(st.session_state.data_year, end_m)
+    unit = st.session_state.settings["currency_unit"]
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("年計総額", f"{int(kpi['total_year_sum']):,} 円" if kpi["total_year_sum"] is not None else "-")
+    c1.metric("年計総額", format_amount(kpi["total_year_sum"], unit))
     c2.metric("年計YoY", f"{kpi['yoy']*100:.1f} %" if kpi["yoy"] is not None else "—")
-    c3.metric("前月差(Δ)", f"{int(kpi['delta']):,} 円" if kpi["delta"] is not None else "—")
+    c3.metric("前月差(Δ)", format_amount(kpi["delta"], unit))
     c4.metric("HHI(集中度)", f"{hhi:.3f}")
 
     # 総合年計トレンド（全SKU合計）
     totals = st.session_state.data_year.groupby("month", as_index=False)["year_sum"].sum()
-    fig = px.line(totals, x="month", y="year_sum", title="総合 年計トレンド", markers=True)
-    fig.update_layout(height=350, margin=dict(l=10,r=10,t=50,b=10))
+    totals["year_sum_disp"] = totals["year_sum"] / UNIT_MAP[unit]
+    fig = px.line(totals, x="month", y="year_sum_disp", title="総合 年計トレンド", markers=True)
+    fig.update_yaxes(title=f"年計({unit})")
+    fig.update_layout(height=350, margin=dict(l=10, r=10, t=50, b=10))
     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
     # ランキング（年計）
     snap = st.session_state.data_year[st.session_state.data_year["month"] == end_m].dropna(subset=["year_sum"]).copy()
     snap = snap.sort_values("year_sum", ascending=False)
     st.subheader(f"ランキング（{end_m} 時点 年計）")
-    st.dataframe(snap[["product_code","product_name","year_sum","yoy","delta"]].head(20), use_container_width=True)
-    st.download_button("この表をCSVでダウンロード", data=snap.to_csv(index=False).encode("utf-8-sig"),
-                       file_name=f"ranking_{end_m}.csv", mime="text/csv")
+    snap_disp = snap.copy()
+    snap_disp["year_sum"] = snap_disp["year_sum"] / UNIT_MAP[unit]
+    st.dataframe(
+        snap_disp[["product_code", "product_name", "year_sum", "yoy", "delta"]].head(20),
+        use_container_width=True,
+    )
+    st.download_button(
+        "この表をCSVでダウンロード",
+        data=snap.to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"ranking_{end_m}.csv",
+        mime="text/csv",
+    )
 
     # PDF出力（KPI + TOP10）
     pdf_bytes = download_pdf_overview({"total_year_sum": int(kpi["total_year_sum"]),
