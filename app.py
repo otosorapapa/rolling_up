@@ -9,6 +9,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 
 PLOTLY_CONFIG = {
     "locale": "ja",
@@ -141,7 +142,20 @@ def marker_step(dates, target_points=24):
 
 # ---------------- Sidebar ----------------
 st.sidebar.title(APP_TITLE)
-page = st.sidebar.radio("メニュー", ["ダッシュボード", "ランキング", "比較ビュー", "SKU詳細", "データ取込", "アラート", "設定", "保存ビュー"])
+page = st.sidebar.radio(
+    "メニュー",
+    [
+        "ダッシュボード",
+        "ランキング",
+        "比較ビュー",
+        "SKU詳細",
+        "相関分析",
+        "データ取込",
+        "アラート",
+        "設定",
+        "保存ビュー",
+    ],
+)
 
 # ---------------- Pages ----------------
 
@@ -252,16 +266,37 @@ elif page == "ランキング":
     end_m = end_month_selector(st.session_state.data_year, key="end_month_rank")
     metric = st.selectbox("指標", options=["year_sum","yoy","delta","slope_beta"], index=0)
     order = st.radio("並び順", options=["desc","asc"], horizontal=True)
+    hide_zero = st.checkbox("年計ゼロを除外", value=True)
 
     snap = st.session_state.data_year[st.session_state.data_year["month"] == end_m].copy()
+    total = len(snap)
+    zero_cnt = int((snap["year_sum"] == 0).sum())
+    if hide_zero:
+        snap = snap[snap["year_sum"] > 0]
     snap = snap.dropna(subset=[metric])
-    snap = snap.sort_values(metric, ascending=(order=="asc"))
-    st.dataframe(snap[["product_code","product_name","year_sum","yoy","delta","slope_beta"]].head(100), use_container_width=True)
+    snap = snap.sort_values(metric, ascending=(order == "asc"))
+    st.caption(f"除外 {zero_cnt} 件 / 全 {total} 件")
 
-    st.download_button("CSVダウンロード", data=snap.to_csv(index=False).encode("utf-8-sig"),
-                       file_name=f"ranking_{metric}_{end_m}.csv", mime="text/csv")
-    st.download_button("Excelダウンロード", data=download_excel(snap, f"ranking_{metric}_{end_m}.xlsx"),
-                       file_name=f"ranking_{metric}_{end_m}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    fig_bar = px.bar(snap.head(20), x="product_name", y=metric)
+    st.plotly_chart(fig_bar, use_container_width=True, config=PLOTLY_CONFIG)
+
+    st.dataframe(
+        snap[["product_code", "product_name", "year_sum", "yoy", "delta", "slope_beta"]].head(100),
+        use_container_width=True,
+    )
+
+    st.download_button(
+        "CSVダウンロード",
+        data=snap.to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"ranking_{metric}_{end_m}.csv",
+        mime="text/csv",
+    )
+    st.download_button(
+        "Excelダウンロード",
+        data=download_excel(snap, f"ranking_{metric}_{end_m}.xlsx"),
+        file_name=f"ranking_{metric}_{end_m}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
     # 4) 比較ビュー（マルチ商品バンド）
@@ -779,47 +814,140 @@ elif page == "SKU詳細":
     require_data()
     st.header("SKU 詳細")
     end_m = end_month_selector(st.session_state.data_year, key="end_month_detail")
-    prods = st.session_state.data_year[["product_code","product_name"]].drop_duplicates().sort_values("product_code")
-    prod_label = st.selectbox("SKU選択", options=prods["product_code"] + " | " + prods["product_name"])
-    code = prod_label.split(" | ")[0]
+    prods = st.session_state.data_year[["product_code", "product_name"]].drop_duplicates().sort_values("product_code")
+    mode = st.radio("表示モード", ["単品", "複数比較"], horizontal=True)
+    if mode == "単品":
+        prod_label = st.selectbox("SKU選択", options=prods["product_code"] + " | " + prods["product_name"])
+        code = prod_label.split(" | ")[0]
 
-    # 時系列
-    g_m = st.session_state.data_monthly[st.session_state.data_monthly["product_code"] == code].sort_values("month")
-    g_y = st.session_state.data_year[st.session_state.data_year["product_code"] == code].sort_values("month")
+        g_m = st.session_state.data_monthly[st.session_state.data_monthly["product_code"] == code].sort_values("month")
+        g_y = st.session_state.data_year[st.session_state.data_year["product_code"] == code].sort_values("month")
 
-    c1, c2 = st.columns(2)
-    with c1:
-        fig1 = px.line(g_m, x="month", y="sales_amount_jpy", title="単月 売上推移", markers=True)
-        st.plotly_chart(fig1, use_container_width=True, height=350, config=PLOTLY_CONFIG)
-    with c2:
-        fig2 = px.line(g_y, x="month", y="year_sum", title="年計 推移", markers=True)
-        st.plotly_chart(fig2, use_container_width=True, height=350, config=PLOTLY_CONFIG)
+        c1, c2 = st.columns(2)
+        with c1:
+            fig1 = px.line(g_m, x="month", y="sales_amount_jpy", title="単月 売上推移", markers=True)
+            st.plotly_chart(fig1, use_container_width=True, height=350, config=PLOTLY_CONFIG)
+        with c2:
+            fig2 = px.line(g_y, x="month", y="year_sum", title="年計 推移", markers=True)
+            st.plotly_chart(fig2, use_container_width=True, height=350, config=PLOTLY_CONFIG)
 
-    # 指標
-    row = g_y[g_y["month"] == end_m]
-    if not row.empty:
-        rr = row.iloc[0]
-        c1, c2, c3 = st.columns(3)
-        c1.metric("年計", f"{int(rr['year_sum']) if not pd.isna(rr['year_sum']) else '—'}")
-        c2.metric("YoY", f"{rr['yoy']*100:.1f} %" if not pd.isna(rr["yoy"]) else "—")
-        c3.metric("Δ", f"{int(rr['delta'])}" if not pd.isna(rr["delta"]) else "—")
+        row = g_y[g_y["month"] == end_m]
+        if not row.empty:
+            rr = row.iloc[0]
+            c1, c2, c3 = st.columns(3)
+            c1.metric("年計", f"{int(rr['year_sum']) if not pd.isna(rr['year_sum']) else '—'}")
+            c2.metric("YoY", f"{rr['yoy']*100:.1f} %" if not pd.isna(rr["yoy"]) else "—")
+            c3.metric("Δ", f"{int(rr['delta'])}" if not pd.isna(rr["delta"]) else "—")
 
-    # メモ / タグ
-    st.subheader("メモ / タグ")
-    note = st.text_area("メモ（保存で保持）", value=st.session_state.notes.get(code, ""), height=100)
-    tags_str = st.text_input("タグ（カンマ区切り）", value=",".join(st.session_state.tags.get(code, [])))
-    c1, c2 = st.columns([1,1])
-    if c1.button("保存"):
-        st.session_state.notes[code] = note
-        st.session_state.tags[code] = [t.strip() for t in tags_str.split(",") if t.strip()]
-        st.success("保存しました")
-    if c2.button("CSVでエクスポート"):
-        meta = pd.DataFrame([{"product_code": code, "note": st.session_state.notes.get(code, ""),
-                              "tags": ",".join(st.session_state.tags.get(code, []))}])
-        st.download_button("ダウンロード", data=meta.to_csv(index=False).encode("utf-8-sig"),
-                           file_name=f"notes_{code}.csv", mime="text/csv")
+        st.subheader("メモ / タグ")
+        note = st.text_area("メモ（保存で保持）", value=st.session_state.notes.get(code, ""), height=100)
+        tags_str = st.text_input("タグ（カンマ区切り）", value=",".join(st.session_state.tags.get(code, [])))
+        c1, c2 = st.columns([1, 1])
+        if c1.button("保存"):
+            st.session_state.notes[code] = note
+            st.session_state.tags[code] = [t.strip() for t in tags_str.split(",") if t.strip()]
+            st.success("保存しました")
+        if c2.button("CSVでエクスポート"):
+            meta = pd.DataFrame(
+                [
+                    {
+                        "product_code": code,
+                        "note": st.session_state.notes.get(code, ""),
+                        "tags": ",".join(st.session_state.tags.get(code, [])),
+                    }
+                ]
+            )
+            st.download_button(
+                "ダウンロード",
+                data=meta.to_csv(index=False).encode("utf-8-sig"),
+                file_name=f"notes_{code}.csv",
+                mime="text/csv",
+            )
+    else:
+        opts = (prods["product_code"] + " | " + prods["product_name"]).tolist()
+        sel = st.multiselect("SKU選択（最大12件）", options=opts, max_selections=12)
+        codes = [s.split(" | ")[0] for s in sel]
+        if codes:
+            df_long, _ = get_yearly_series(st.session_state.data_year, codes)
+            df_long["display_name"] = df_long["product_name"].fillna(df_long["product_code"])
+            fig = px.line(df_long, x="month", y="year_sum", color="display_name")
+            fig.update_layout(hovermode="x unified")
+            st.plotly_chart(fig, use_container_width=True, height=350, config=PLOTLY_CONFIG)
 
-# 5) アラート
+            fig_sm = px.line(
+                df_long,
+                x="month",
+                y="year_sum",
+                color="display_name",
+                facet_col="display_name",
+                facet_col_wrap=3,
+            )
+            fig_sm.update_layout(showlegend=False)
+            st.plotly_chart(fig_sm, use_container_width=True, height=350, config=PLOTLY_CONFIG)
+
+            snap = latest_yearsum_snapshot(st.session_state.data_year, end_m)
+            snap = snap[snap["product_code"].isin(codes)]
+            st.dataframe(
+                snap[["product_code", "product_name", "year_sum", "yoy", "delta"]],
+                use_container_width=True,
+            )
+            st.download_button(
+                "CSVダウンロード",
+                data=snap.to_csv(index=False).encode("utf-8-sig"),
+                file_name=f"sku_multi_{end_m}.csv",
+                mime="text/csv",
+            )
+        else:
+            st.info("SKUを選択してください。")
+
+# 5) 相関分析
+elif page == "相関分析":
+    require_data()
+    st.header("相関分析")
+    end_m = end_month_selector(st.session_state.data_year, key="corr_end_month")
+    snapshot = latest_yearsum_snapshot(st.session_state.data_year, end_m)
+    metrics = st.multiselect(
+        "相関を見る指標",
+        ["year_sum", "yoy", "delta", "slope_beta"],
+        default=["year_sum", "yoy", "delta"],
+    )
+    if metrics:
+        corr = snapshot[metrics].corr(method="pearson")
+        fig_corr = px.imshow(
+            corr, color_continuous_scale="RdBu_r", zmin=-1, zmax=1, text_auto=True
+        )
+        st.plotly_chart(fig_corr, use_container_width=True, config=PLOTLY_CONFIG)
+
+        fig_scatter = px.scatter_matrix(
+            snapshot,
+            dimensions=metrics,
+            hover_data=["product_code", "product_name"],
+        )
+        st.plotly_chart(fig_scatter, use_container_width=True, config=PLOTLY_CONFIG)
+
+        if len(metrics) >= 2:
+            x_col, y_col = metrics[0], metrics[1]
+            df_xy = snapshot[[x_col, y_col]].dropna()
+            if not df_xy.empty:
+                slope, intercept = np.polyfit(df_xy[x_col], df_xy[y_col], 1)
+                r = df_xy[x_col].corr(df_xy[y_col])
+                r2 = r ** 2
+                fig_reg = px.scatter(
+                    df_xy,
+                    x=x_col,
+                    y=y_col,
+                    hover_data=["product_code", "product_name"],
+                )
+                xs = np.linspace(df_xy[x_col].min(), df_xy[x_col].max(), 100)
+                fig_reg.add_trace(
+                    go.Scatter(x=xs, y=intercept + slope * xs, mode="lines", name="回帰")
+                )
+                st.plotly_chart(fig_reg, use_container_width=True, config=PLOTLY_CONFIG)
+                st.caption(f"傾き {slope:.3f} / r {r:.3f} / R² {r2:.3f}")
+    else:
+        st.info("指標を選択してください。")
+
+# 6) アラート
 elif page == "アラート":
     require_data()
     st.header("アラート")
