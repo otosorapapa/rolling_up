@@ -542,5 +542,10 @@ def get_yearly_series(df_year: pd.DataFrame,
         df = df[df["month"] >= start]
     if end is not None:
         df = df[df["month"] <= end]
-    pivot = df.pivot(index="month", columns="product_code", values=metric).sort_index()
+    pivot = df.pivot_table(
+        index="month",
+        columns="product_code",
+        values=metric,
+        aggfunc="sum",
+    ).sort_index()
     return df, pivot
