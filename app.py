@@ -10,6 +10,24 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 
+PLOTLY_CONFIG = {
+    "locale": "ja",
+    "displaylogo": False,
+    "scrollZoom": True,
+    "doubleClick": "reset",
+    "modeBarButtonsToRemove": [
+        "autoScale2d",
+        "resetViewMapbox",
+        "toggleSpikelines",
+        "select2d",
+        "lasso2d",
+        "zoom3d",
+        "orbitRotation",
+        "tableRotation",
+    ],
+    "toImageButtonOptions": {"format": "png", "filename": "年計比較"},
+}
+
 from services import (
     parse_uploaded_table,
     fill_missing_months,
@@ -115,6 +133,11 @@ def download_pdf_overview(kpi: dict, top_df: pd.DataFrame, filename: str) -> byt
     return buffer.getvalue()
 
 
+def marker_step(dates, target_points=24):
+    n = len(pd.unique(dates))
+    return max(1, round(n / target_points))
+
+
 # ---------------- Sidebar ----------------
 st.sidebar.title(APP_TITLE)
 page = st.sidebar.radio("メニュー", ["ダッシュボード", "ランキング", "比較ビュー", "SKU詳細", "データ取込", "アラート", "設定", "保存ビュー"])
@@ -204,7 +227,7 @@ elif page == "ダッシュボード":
     totals = st.session_state.data_year.groupby("month", as_index=False)["year_sum"].sum()
     fig = px.line(totals, x="month", y="year_sum", title="総合 年計トレンド", markers=True)
     fig.update_layout(height=350, margin=dict(l=10,r=10,t=50,b=10))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
     # ランキング（年計）
     snap = st.session_state.data_year[st.session_state.data_year["month"] == end_m].dropna(subset=["year_sum"]).copy()
@@ -376,7 +399,7 @@ elif page == "比較ビュー":
 
     # ---- ヒストグラム ----
     hist_fig = px.histogram(snapshot, x="year_sum")
-    st.plotly_chart(hist_fig, use_container_width=True, height=200)
+    st.plotly_chart(hist_fig, use_container_width=True, height=200, config=PLOTLY_CONFIG)
 
     ghost_outside = []
     if apply_mode == "バンド外ゴースト":
@@ -410,6 +433,13 @@ elif page == "比較ビュー":
         ghost_codes = ghost_outside + [c for c in codes if c not in main_codes]
 
     df_main = df_long[df_long["product_code"].isin(main_codes)]
+
+    node_mode = st.radio("ノード表示", ["自動", "主要ノードのみ", "すべて", "非表示"], index=0, horizontal=True)
+    node_size = st.radio("ノードサイズ", ["小", "中", "大"], index=1, horizontal=True)
+    show_keynode_labels = st.checkbox("主要ノードラベル", value=True)
+    hover_mode = st.radio("ホバー表示", ["個別", "同月まとめ"], index=1, horizontal=True)
+    op_mode = st.radio("操作モード", ["パン", "ズーム", "選択"], index=0, horizontal=True)
+
     fig = px.line(
         df_main,
         x="month",
@@ -431,10 +461,70 @@ elif page == "比較ビュー":
             line=dict(width=1.5, color="gray"),
             opacity=0.15,
             showlegend=False,
-            hovertemplate="<b>%{customdata[0]}</b><br>%{x|%Y-%m}<br>年計：%{y:,.0f} 円",
+            hovertemplate="<b>%{customdata[0]}</b><br>月：%{x|%Y-%m}<br>年計：%{y:,.0f} 円<extra></extra>",
         )
         for t in ghost_fig.data:
             fig.add_trace(t)
+
+    fig.update_traces(
+        mode="lines",
+        line=dict(width=1.5),
+        opacity=0.45,
+        selector=dict(mode="lines"),
+        hovertemplate="<b>%{customdata[0]}</b><br>月：%{x|%Y-%m}<br>年計：%{y:,.0f} 円<extra></extra>",
+    )
+
+    theme_is_dark = st.get_option("theme.base") == "dark"
+    HALO = "#ffffff" if theme_is_dark else "#222222"
+    SZ = {"小": 4, "中": 6, "大": 8}[node_size]
+
+    if node_mode == "自動":
+        step = marker_step(df_main["month"])
+        df_nodes = (
+            df_main.sort_values("month")
+            .assign(_idx=df_main.sort_values("month").groupby("display_name").cumcount())
+            .query("(_idx % @step) == 0")
+        )
+    elif node_mode == "主要ノードのみ":
+        g = df_main.sort_values("month").groupby("display_name")
+        latest = g.tail(1)
+        idxmax = df_main.loc[g["year_sum"].idxmax().dropna()]
+        idxmin = df_main.loc[g["year_sum"].idxmin().dropna()]
+        ystart = g.head(1)
+        df_nodes = pd.concat([latest, idxmax, idxmin, ystart]).drop_duplicates(["display_name", "month"])
+    elif node_mode == "すべて":
+        df_nodes = df_main.copy()
+    else:
+        df_nodes = df_main.iloc[0:0].copy()
+
+    for name, d in df_nodes.groupby("display_name"):
+        fig.add_scatter(
+            x=d["month"],
+            y=d["year_sum"],
+            mode="markers",
+            name=name,
+            legendgroup=name,
+            showlegend=False,
+            marker=dict(size=SZ, symbol="circle", line=dict(color=HALO, width=2), opacity=0.95),
+            hovertemplate="<b>%{customdata[0]}</b><br>月：%{x|%Y-%m}<br>年計：%{y:,.0f} 円<extra></extra>",
+            customdata=np.stack([d["display_name"]], axis=-1),
+        )
+
+    if show_keynode_labels and node_mode != "非表示":
+        for _, r in df_nodes.groupby("display_name").tail(1).iterrows():
+            fig.add_annotation(
+                x=r["month"],
+                y=r["year_sum"],
+                text=f"{r['year_sum']:,.0f}（{r['month']:%Y-%m}）",
+                showarrow=True,
+                arrowhead=2,
+                arrowsize=1,
+                arrowwidth=1,
+                ax=8,
+                ay=-12,
+                bgcolor="rgba(0,0,0,0.6)" if theme_is_dark else "rgba(255,255,255,0.8)",
+                font=dict(size=11),
+            )
 
     n_months = (
         df_main["month"].max().year * 12
@@ -453,6 +543,7 @@ elif page == "比較ビュー":
         showspikes=True,
         spikemode="across",
         spikesnap="cursor",
+        title_text="月（YYYY-MM）",
     )
     fig.update_yaxes(
         tickformat="~,d",
@@ -461,15 +552,20 @@ elif page == "比較ビュー":
         showgrid=True,
     )
     fig.update_layout(
-        hovermode="x unified",
-        dragmode="pan",
         legend_title_text="商品名",
         legend=dict(y=1, x=1.02, yanchor="top", xanchor="left", tracegroupgap=8, itemsizing="constant"),
         margin=dict(l=60, r=160, t=40, b=70),
         template="plotly_dark",
         height=500,
+        font=dict(family="Noto Sans JP, Meiryo, Arial", size=12),
     )
-    fig.update_traces(mode="lines", line=dict(width=1.5), opacity=0.45, selector=dict(name=".*"))
+
+    drag = {"ズーム": "zoom", "パン": "pan", "選択": "select"}[op_mode]
+    fig.update_layout(dragmode=drag)
+    if hover_mode == "個別":
+        fig.update_layout(hovermode="closest")
+    else:
+        fig.update_layout(hovermode="x unified", hoverlabel=dict(align="left", bgcolor="rgba(30,30,30,0.95)", font_size=12))
 
     pin_name = None
     if pin_code:
@@ -517,7 +613,7 @@ elif page == "比較ビュー":
     st.plotly_chart(
         fig,
         use_container_width=True,
-        config={"displaylogo": False, "toImageButtonOptions": {"format": "png"}},
+        config=PLOTLY_CONFIG,
     )
     st.caption("凡例クリックで表示切替、ダブルクリックで単独表示。ドラッグでズーム/パン、右上メニューからPNG/CSV取得可。")
 
@@ -556,10 +652,47 @@ elif page == "比較ビュー":
             color_discrete_sequence=[fig.layout.colorway[i % len(fig.layout.colorway)]],
             custom_data=["display_name"],
         )
-        fig_s.update_traces(mode="lines", line=dict(width=1.5), opacity=0.8, showlegend=False,
-                            hovertemplate="<b>%{customdata[0]}</b><br>%{x|%Y-%m}<br>年計：%{y:,.0f} 円")
-        fig_s.update_xaxes(tickformat="%Y-%m", dtick="M3")
-        fig_s.update_yaxes(tickformat="~,d", range=[0, ymax] if ymax else None)
+        fig_s.update_traces(
+            mode="lines",
+            line=dict(width=1.5),
+            opacity=0.8,
+            showlegend=False,
+            hovertemplate="<b>%{customdata[0]}</b><br>月：%{x|%Y-%m}<br>年計：%{y:,.0f} 円<extra></extra>",
+        )
+        g_nodes = df_nodes[df_nodes["product_code"] == code]
+        if not g_nodes.empty:
+            fig_s.add_scatter(
+                x=g_nodes["month"],
+                y=g_nodes["year_sum"],
+                mode="markers",
+                marker=dict(size=SZ, symbol="circle", line=dict(color=HALO, width=2), opacity=0.95),
+                showlegend=False,
+                hovertemplate="<b>%{customdata[0]}</b><br>月：%{x|%Y-%m}<br>年計：%{y:,.0f} 円<extra></extra>",
+                customdata=np.stack([g_nodes["display_name"]], axis=-1),
+            )
+            if show_keynode_labels and node_mode != "非表示":
+                last_r = g_nodes.sort_values("month").iloc[-1]
+                fig_s.add_annotation(
+                    x=last_r["month"],
+                    y=last_r["year_sum"],
+                    text=f"{last_r['year_sum']:,.0f}（{last_r['month']:%Y-%m}）",
+                    showarrow=True,
+                    arrowhead=2,
+                    arrowsize=1,
+                    arrowwidth=1,
+                    ax=8,
+                    ay=-12,
+                    bgcolor="rgba(0,0,0,0.6)" if theme_is_dark else "rgba(255,255,255,0.8)",
+                    font=dict(size=10),
+                )
+        fig_s.update_xaxes(tickformat="%Y-%m", dtick=dtick, title_text="月（YYYY-MM）")
+        fig_s.update_yaxes(tickformat="~,d", range=[0, ymax] if ymax else None, title_text="売上 年計（円）")
+        fig_s.update_layout(font=dict(family="Noto Sans JP, Meiryo, Arial", size=12))
+        fig_s.update_layout(dragmode=drag)
+        if hover_mode == "個別":
+            fig_s.update_layout(hovermode="closest")
+        else:
+            fig_s.update_layout(hovermode="x unified", hoverlabel=dict(align="left", bgcolor="rgba(30,30,30,0.95)", font_size=12))
         last_val = g.sort_values("month")["year_sum"].iloc[-1] if not g.empty else np.nan
         with cols[i % col_count]:
             st.metric(disp, f"{last_val:,.0f}" if not np.isnan(last_val) else "—")
@@ -567,7 +700,7 @@ elif page == "比較ビュー":
                 fig_s,
                 use_container_width=True,
                 height=150,
-                config={"displaylogo": False, "toImageButtonOptions": {"format": "png"}},
+                config=PLOTLY_CONFIG,
             )
 
     if new_in or left_out:
@@ -589,10 +722,10 @@ elif page == "SKU詳細":
     c1, c2 = st.columns(2)
     with c1:
         fig1 = px.line(g_m, x="month", y="sales_amount_jpy", title="単月 売上推移", markers=True)
-        st.plotly_chart(fig1, use_container_width=True, height=350)
+        st.plotly_chart(fig1, use_container_width=True, height=350, config=PLOTLY_CONFIG)
     with c2:
         fig2 = px.line(g_y, x="month", y="year_sum", title="年計 推移", markers=True)
-        st.plotly_chart(fig2, use_container_width=True, height=350)
+        st.plotly_chart(fig2, use_container_width=True, height=350, config=PLOTLY_CONFIG)
 
     # 指標
     row = g_y[g_y["month"] == end_m]
