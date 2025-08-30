@@ -45,6 +45,8 @@ from services import (
     get_yearly_series,
     top_growth_codes,
     trend_last6,
+    slopes_snapshot,
+    shape_flags,
 )
 
 APP_TITLE = "売上年計（12カ月移動累計）ダッシュボード"
@@ -473,7 +475,6 @@ elif page == "比較ビュー":
     if search:
         snapshot = snapshot[snapshot["display_name"].str.contains(search, case=False, na=False)]
     # ---- 操作バー＋グラフ密着カード ----
-    hist_fig = px.histogram(snapshot, x="year_sum")
 
     band_params = params.get("band_params", {})
     max_amount = float(snapshot["year_sum"].max()) if not snapshot.empty else 0.0
@@ -484,13 +485,16 @@ elif page == "比較ビュー":
         """
 <style>
 .chart-card { position: relative; margin:.25rem 0 1rem; border-radius:12px;
-  border:1px solid rgba(255,255,255,.08); background:var(--background-color,#0f172a); }
+  border:1px solid rgba(113,178,255,.25); background:var(--background-color,#0f172a); }
 .chart-toolbar { position: sticky; top: -1px; z-index: 5;
   display:flex; gap:.6rem; flex-wrap:wrap; align-items:center;
-  padding:.35rem .6rem; border-bottom:1px solid rgba(255,255,255,.08); }
+  padding:.35rem .6rem; background: linear-gradient(180deg, rgba(113,178,255,.20), rgba(113,178,255,.10));
+  border-bottom:1px solid rgba(113,178,255,.35); }
 /* Streamlit標準の下マージンを除去（ここが距離の主因） */
 .chart-toolbar .stRadio, .chart-toolbar .stSelectbox, .chart-toolbar .stSlider,
 .chart-toolbar .stMultiSelect, .chart-toolbar .stCheckbox { margin-bottom:0 !important; }
+.chart-toolbar .stRadio > label, .chart-toolbar .stCheckbox > label { color:#e6f2ff; }
+.chart-toolbar .stSlider label { color:#e6f2ff; }
 .chart-body { padding:.15rem .4rem .4rem; }
 </style>
         """,
@@ -579,6 +583,25 @@ elif page == "比較ビュー":
         label_max = st.slider("ラベル最大件数", 5, 20, 12)
     with c12:
         alternate_side = st.checkbox("ラベル左右交互配置", value=True)
+    c13, c14, c15, c16, c17 = st.columns([1.0, 1.4, 1.2, 1.2, 1.2])
+    with c13:
+        unit = st.radio("単位", ["円", "千円", "百万円"], horizontal=True, index=1)
+    with c14:
+        n_win = st.slider("傾きウィンドウ（月）", 3, 12, 6, 1)
+    with c15:
+        cmp_mode = st.radio("傾き条件", ["以上", "未満"], horizontal=True)
+    with c16:
+        thr_type = st.radio("しきい値の種類", ["円/月", "%/月", "zスコア"], horizontal=True)
+    with c17:
+        default_thr = 0.03 if thr_type == "%/月" else (1.5 if thr_type == "zスコア" else 100000.0)
+        thr_val = st.number_input("しきい値", value=float(default_thr))
+    c18, c19, c20 = st.columns([1.6, 1.2, 1.8])
+    with c18:
+        sens = st.slider("形状抽出の感度", 0.0, 1.0, 0.5, 0.05)
+    with c19:
+        z_thr = st.slider("急勾配 zスコア", 0.5, 3.0, 1.5, 0.1)
+    with c20:
+        shape_pick = st.radio("形状抽出", ["（なし）", "急勾配", "山（への字）", "谷（逆への字）"], horizontal=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
     params = {
@@ -610,9 +633,37 @@ elif page == "比較ビュー":
     elif quick == "直近6M伸長上位":
         codes = top_growth_codes(year_df, end_m, window=6, top=10)
 
-    df_long, _ = get_yearly_series(year_df, codes)
+    snap = slopes_snapshot(year_df, n=n_win)
+    if   thr_type == "円/月":
+        key, v = "slope_yen", float(thr_val)
+    elif thr_type == "%/月":
+        key, v = "slope_ratio", float(thr_val)
+    else:
+        key, v = "slope_z", float(thr_val)
+    mask = (snap[key] >= v) if cmp_mode == "以上" else (snap[key] <= v)
+    codes_by_slope = set(snap.loc[mask, "product_code"])
+
+    shape_df = shape_flags(year_df, window=max(8, n_win * 2),
+                            alpha_ratio=0.02 * (1.0 - sens), amp_ratio=0.06 * (1.0 - sens))
+    codes_steep = set(snap.loc[snap["slope_z"].abs() >= z_thr, "product_code"])
+    codes_mtn = set(shape_df.loc[shape_df["is_mountain"], "product_code"])
+    codes_val = set(shape_df.loc[shape_df["is_valley"], "product_code"])
+    shape_map = {"（なし）": None, "急勾配": codes_steep, "山（への字）": codes_mtn, "谷（逆への字）": codes_val}
+    codes_by_shape = shape_map[shape_pick] or set(snap["product_code"])
+
+    codes_from_band = set(codes)
+    target_codes = list(codes_from_band & codes_by_slope & codes_by_shape)
+
+    scale = {"円": 1, "千円": 1_000, "百万円": 1_000_000}[unit]
+    snapshot_disp = snapshot.copy()
+    snapshot_disp["year_sum_disp"] = snapshot_disp["year_sum"] / scale
+    hist_fig = px.histogram(snapshot_disp, x="year_sum_disp")
+    hist_fig.update_xaxes(title_text=f"年計（{unit}）")
+
+    df_long, _ = get_yearly_series(year_df, target_codes)
     df_long["month"] = pd.to_datetime(df_long["month"])
     df_long["display_name"] = df_long["product_name"].fillna(df_long["product_code"])
+    df_long["year_sum_disp"] = df_long["year_sum"] / scale
 
     months_back = {"12ヶ月": 12, "24ヶ月": 24, "36ヶ月": 36}[period]
     max_month = df_long["month"].max()
@@ -621,11 +672,11 @@ elif page == "比較ビュー":
         df_long = df_long[df_long["month"] >= start_date]
 
     # TopN 制限
-    main_codes = codes
+    main_codes = target_codes
     max_lines = 15
-    if len(codes) > max_lines:
+    if len(main_codes) > max_lines:
         top_order = (
-            snapshot[snapshot["product_code"].isin(codes)]
+            snapshot[snapshot["product_code"].isin(main_codes)]
             .sort_values("year_sum", ascending=False)["product_code"].tolist()
         )
         main_codes = top_order[:max_lines]
@@ -635,18 +686,18 @@ elif page == "比較ビュー":
     fig = px.line(
         df_main,
         x="month",
-        y="year_sum",
+        y="year_sum_disp",
         color="display_name",
         custom_data=["display_name"],
     )
-    fig.add_hrect(y0=low, y1=high, fillcolor="green", opacity=0.12, line_width=0)
+    fig.add_hrect(y0=low / scale, y1=high / scale, fillcolor="green", opacity=0.12, line_width=0)
 
     fig.update_traces(
         mode="lines",
         line=dict(width=1.5),
         opacity=0.45,
         selector=dict(mode="lines"),
-        hovertemplate="<b>%{customdata[0]}</b><br>月：%{x|%Y-%m}<br>年計：%{y:,.0f} 円<extra></extra>",
+        hovertemplate=f"<b>%{{customdata[0]}}</b><br>月：%{{x|%Y-%m}}<br>年計：%{{y:,.0f}} {unit}<extra></extra>",
     )
     fig.update_layout(hoverlabel=dict(bgcolor="rgba(30,30,30,0.92)", font=dict(color="#fff", size=12)))
 
@@ -675,13 +726,13 @@ elif page == "比較ビュー":
     for name, d in df_nodes.groupby("display_name"):
         fig.add_scatter(
             x=d["month"],
-            y=d["year_sum"],
+            y=d["year_sum_disp"],
             mode="markers",
             name=name,
             legendgroup=name,
             showlegend=False,
             marker=dict(size=SZ, symbol="circle", line=dict(color=HALO, width=2), opacity=0.95),
-            hovertemplate="<b>%{customdata[0]}</b><br>月：%{x|%Y-%m}<br>年計：%{y:,.0f} 円<extra></extra>",
+            hovertemplate=f"<b>%{{customdata[0]}}</b><br>月：%{{x|%Y-%m}}<br>年計：%{{y:,.0f}} {unit}<extra></extra>",
             customdata=np.stack([d["display_name"]], axis=-1),
         )
 
@@ -692,7 +743,7 @@ elif page == "比較ビュー":
                 df_main,
                 label_col="display_name",
                 x_col="month",
-                y_col="year_sum",
+                y_col="year_sum_disp",
                 max_labels=label_max,
                 min_gap_px=label_gap_px,
                 alternate_side=alternate_side,
@@ -701,8 +752,8 @@ elif page == "比較ビュー":
             for _, r in df_nodes.groupby("display_name").tail(1).iterrows():
                 fig.add_annotation(
                     x=r["month"],
-                    y=r["year_sum"],
-                    text=f"{r['year_sum']:,.0f}（{r['month']:%Y-%m}）",
+                    y=r["year_sum_disp"],
+                    text=f"{r['year_sum_disp']:,.0f} {unit}（{r['month']:%Y-%m}）",
                     showarrow=True,
                     arrowhead=2,
                     arrowsize=1,
@@ -736,7 +787,7 @@ elif page == "比較ビュー":
     )
     fig.update_yaxes(
         tickformat="~,d",
-        title_text="売上 年計（円）",
+        title_text=f"売上 年計（{unit}）",
         zeroline=True,
         showgrid=True,
     )
@@ -762,8 +813,8 @@ elif page == "比較ビュー":
             min_row = grp.loc[grp["year_sum"].idxmin()]
             fig.add_annotation(
                 x=max_row["month"],
-                y=max_row["year_sum"],
-                text=f"{max_row['year_sum']:,.0f} ({max_row['month'].strftime('%Y-%m')})",
+                y=max_row["year_sum_disp"],
+                text=f"{max_row['year_sum_disp']:,.0f} {unit} ({max_row['month'].strftime('%Y-%m')})",
                 showarrow=False,
                 yanchor="bottom",
                 font=dict(size=9),
@@ -773,8 +824,8 @@ elif page == "比較ビュー":
             )
             fig.add_annotation(
                 x=min_row["month"],
-                y=min_row["year_sum"],
-                text=f"{min_row['year_sum']:,.0f} ({min_row['month'].strftime('%Y-%m')})",
+                y=min_row["year_sum_disp"],
+                text=f"{min_row['year_sum_disp']:,.0f} {unit} ({min_row['month'].strftime('%Y-%m')})",
                 showarrow=False,
                 yanchor="top",
                 font=dict(size=9),
@@ -789,8 +840,19 @@ elif page == "比較ビュー":
     st.markdown('</section>', unsafe_allow_html=True)
 
     st.caption("凡例クリックで表示切替、ダブルクリックで単独表示。ドラッグでズーム/パン、右上メニューからPNG/CSV取得可。")
+    st.markdown("""
+傾き（円/月）：直近 n ヶ月の回帰直線の傾き。+は上昇、−は下降。
 
-    snap_export = snapshot[snapshot["product_code"].isin(main_codes)]
+%/月：傾き÷平均年計。規模によらず比較可能。
+
+zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配の目安。
+
+山/谷：前半と後半の平均変化率の符号が**＋→−（山）／−→＋（谷）かつ振幅が十分**。
+""")
+
+    snap_export = snapshot[snapshot["product_code"].isin(main_codes)].copy()
+    snap_export[f"year_sum_{unit}"] = snap_export["year_sum"] / scale
+    snap_export = snap_export.drop(columns=["year_sum"]) 
     st.download_button(
         "CSVエクスポート",
         data=snap_export.to_csv(index=False).encode("utf-8-sig"),
@@ -809,6 +871,7 @@ elif page == "比較ビュー":
     # ---- Small Multiples ----
     st.subheader("スモールマルチプル")
     share_y = st.checkbox("Y軸共有", value=False)
+    show_keynode_labels = st.checkbox("キーノードラベル表示", value=False)
     per_page = st.radio("1ページ表示枚数", [8, 12], horizontal=True, index=0)
     total_pages = max(1, math.ceil(len(main_codes) / per_page))
     page_idx = st.number_input("ページ", min_value=1, max_value=total_pages, value=1)
@@ -816,14 +879,14 @@ elif page == "比較ビュー":
     page_codes = main_codes[start : start + per_page]
     col_count = 4
     cols = st.columns(col_count)
-    ymax = df_long[df_long["product_code"].isin(main_codes)]["year_sum"].max() if share_y else None
+    ymax = df_long[df_long["product_code"].isin(main_codes)]["year_sum_disp"].max() if share_y else None
     for i, code in enumerate(page_codes):
         g = df_long[df_long["product_code"] == code]
         disp = g["display_name"].iloc[0] if not g.empty else code
         fig_s = px.line(
             g,
             x="month",
-            y="year_sum",
+            y="year_sum_disp",
             color_discrete_sequence=[fig.layout.colorway[i % len(fig.layout.colorway)]],
             custom_data=["display_name"],
         )
@@ -832,25 +895,25 @@ elif page == "比較ビュー":
             line=dict(width=1.5),
             opacity=0.8,
             showlegend=False,
-            hovertemplate="<b>%{customdata[0]}</b><br>月：%{x|%Y-%m}<br>年計：%{y:,.0f} 円<extra></extra>",
+            hovertemplate=f"<b>%{{customdata[0]}}</b><br>月：%{{x|%Y-%m}}<br>年計：%{{y:,.0f}} {unit}<extra></extra>",
         )
         g_nodes = df_nodes[df_nodes["product_code"] == code]
         if not g_nodes.empty:
             fig_s.add_scatter(
                 x=g_nodes["month"],
-                y=g_nodes["year_sum"],
+                y=g_nodes["year_sum_disp"],
                 mode="markers",
                 marker=dict(size=SZ, symbol="circle", line=dict(color=HALO, width=2), opacity=0.95),
                 showlegend=False,
-                hovertemplate="<b>%{customdata[0]}</b><br>月：%{x|%Y-%m}<br>年計：%{y:,.0f} 円<extra></extra>",
+                hovertemplate=f"<b>%{{customdata[0]}}</b><br>月：%{{x|%Y-%m}}<br>年計：%{{y:,.0f}} {unit}<extra></extra>",
                 customdata=np.stack([g_nodes["display_name"]], axis=-1),
             )
             if show_keynode_labels and node_mode != "非表示":
                 last_r = g_nodes.sort_values("month").iloc[-1]
                 fig_s.add_annotation(
                     x=last_r["month"],
-                    y=last_r["year_sum"],
-                    text=f"{last_r['year_sum']:,.0f}（{last_r['month']:%Y-%m}）",
+                    y=last_r["year_sum_disp"],
+                    text=f"{last_r['year_sum_disp']:,.0f} {unit}（{last_r['month']:%Y-%m}）",
                     showarrow=True,
                     arrowhead=2,
                     arrowsize=1,
@@ -863,7 +926,7 @@ elif page == "比較ビュー":
                     font=dict(size=10),
                 )
         fig_s.update_xaxes(tickformat="%Y-%m", dtick=dtick, title_text="月（YYYY-MM）")
-        fig_s.update_yaxes(tickformat="~,d", range=[0, ymax] if ymax else None, title_text="売上 年計（円）")
+        fig_s.update_yaxes(tickformat="~,d", range=[0, ymax] if ymax else None, title_text=f"売上 年計（{unit}）")
         fig_s.update_layout(font=dict(family="Noto Sans JP, Meiryo, Arial", size=12))
         fig_s.update_layout(hoverlabel=dict(bgcolor="rgba(30,30,30,0.92)", font=dict(color="#fff", size=12)))
         fig_s.update_layout(dragmode=drag)
@@ -871,9 +934,9 @@ elif page == "比較ビュー":
             fig_s.update_layout(hovermode="closest")
         else:
             fig_s.update_layout(hovermode="x unified", hoverlabel=dict(align="left"))
-        last_val = g.sort_values("month")["year_sum"].iloc[-1] if not g.empty else np.nan
+        last_val = g.sort_values("month")["year_sum_disp"].iloc[-1] if not g.empty else np.nan
         with cols[i % col_count]:
-            st.metric(disp, f"{last_val:,.0f}" if not np.isnan(last_val) else "—")
+            st.metric(disp, f"{last_val:,.0f} {unit}" if not np.isnan(last_val) else "—")
             st.plotly_chart(
                 fig_s,
                 use_container_width=True,
