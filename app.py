@@ -140,6 +140,165 @@ def marker_step(dates, target_points=24):
     return max(1, round(n / target_points))
 
 
+# ---- Correlation Helpers & Label Overlap Avoidance ----
+
+
+def fisher_ci(r: float, n: int, zcrit: float = 1.96):
+    r = np.clip(r, -0.999999, 0.999999)
+    if n <= 3:
+        return np.nan, np.nan
+    z = np.arctanh(r)
+    se = 1 / np.sqrt(n - 3)
+    lo, hi = np.tanh(z - zcrit * se), np.tanh(z + zcrit * se)
+    return float(lo), float(hi)
+
+
+def corr_table(df: pd.DataFrame, cols, method: str = "pearson"):
+    sub = df[cols].dropna()
+    n = len(sub)
+    c = sub.corr(method=method)
+    rows = []
+    for i, a in enumerate(cols):
+        for b in cols[i + 1 :]:
+            r = c.loc[a, b]
+            lo, hi = fisher_ci(r, n)
+            sig = "有意(95%)" if (lo > 0 or hi < 0) else "n.s."
+            rows.append(
+                {
+                    "pair": f"{a}×{b}",
+                    "r": r,
+                    "n": n,
+                    "ci_low": lo,
+                    "ci_high": hi,
+                    "sig": sig,
+                }
+            )
+    return pd.DataFrame(rows).sort_values("r", ascending=False)
+
+
+def winsorize_frame(df, cols, p: float = 0.01):
+    out = df.copy()
+    for col in cols:
+        x = out[col]
+        lo, hi = x.quantile(p), x.quantile(1 - p)
+        out[col] = x.clip(lo, hi)
+    return out
+
+
+def maybe_log1p(df, cols, enable: bool):
+    if not enable:
+        return df
+    out = df.copy()
+    for col in cols:
+        if (out[col] >= 0).all():
+            out[col] = np.log1p(out[col])
+    return out
+
+
+def narrate_top_insights(tbl: pd.DataFrame, name_map: dict, k: int = 3):
+    pos = tbl[tbl["r"] > 0].nlargest(k, "r")
+    neg = tbl[tbl["r"] < 0].nsmallest(k, "r")
+    lines = []
+
+    def jp(pair):
+        a, b = pair.split("×")
+        return f"「{name_map.get(a, a)}」と「{name_map.get(b, b)}」"
+
+    for _, r in pos.iterrows():
+        lines.append(
+            f"{jp(r['pair'])} は **正の相関** (r={r['r']:.2f}, 95%CI [{r['ci_low']:.2f},{r['ci_high']:.2f}], n={r['n']})。"
+        )
+    for _, r in neg.iterrows():
+        lines.append(
+            f"{jp(r['pair'])} は **負の相関** (r={r['r']:.2f}, 95%CI [{r['ci_low']:.2f},{r['ci_high']:.2f}], n={r['n']})。"
+        )
+    return lines
+
+
+def fit_line(x, y):
+    x = x.values.astype(float)
+    y = y.values.astype(float)
+    m, b = np.polyfit(x, y, 1)
+    yhat = m * x + b
+    ss_res = np.sum((y - yhat) ** 2)
+    ss_tot = np.sum((y - y.mean()) ** 2)
+    r2 = 1 - ss_res / ss_tot if ss_tot > 0 else np.nan
+    return m, b, r2
+
+
+def _plot_area_height(fig: go.Figure) -> int:
+    h = fig.layout.height or 520
+    m = fig.layout.margin or {}
+    t = getattr(m, "t", 40) or 40
+    b = getattr(m, "b", 60) or 60
+    return max(120, int(h - t - b))
+
+
+def _y_to_px(y, y0, y1, plot_h):
+    if y1 == y0:
+        y1 = y0 + 1.0
+    return float((1 - (y - y0) / (y1 - y0)) * plot_h)
+
+
+def add_latest_labels_no_overlap(
+    fig: go.Figure,
+    df_long: pd.DataFrame,
+    label_col: str = "display_name",
+    x_col: str = "month",
+    y_col: str = "year_sum",
+    max_labels: int = 12,
+    min_gap_px: int = 12,
+    alternate_side: bool = True,
+    xpad_px: int = 8,
+    font_size: int = 11,
+):
+    last = df_long.sort_values(x_col).groupby(label_col, as_index=False).tail(1)
+    if len(last) == 0:
+        return
+    cand = last.sort_values(y_col, ascending=False).head(max_labels).copy()
+    yaxis = fig.layout.yaxis
+    if getattr(yaxis, "range", None):
+        y0, y1 = yaxis.range
+    else:
+        y0, y1 = float(df_long[y_col].min()), float(df_long[y_col].max())
+    plot_h = _plot_area_height(fig)
+    cand["y_px"] = cand[y_col].apply(lambda v: _y_to_px(v, y0, y1, plot_h))
+    cand = cand.sort_values("y_px")
+    placed = []
+    for _, r in cand.iterrows():
+        base = r["y_px"]
+        if placed and base <= placed[-1] + min_gap_px:
+            base = placed[-1] + min_gap_px
+        base = float(np.clip(base, 0 + 6, plot_h - 6))
+        placed.append(base)
+        yshift = -(base - r["y_px"])
+        xshift = xpad_px if (not alternate_side or (len(placed) % 2 == 1)) else -xpad_px
+        fig.add_annotation(
+            x=r[x_col],
+            y=r[y_col],
+            text=f"{r[label_col]}：{r[y_col]:,.0f}（{pd.to_datetime(r[x_col]).strftime('%Y-%m')}）",
+            showarrow=False,
+            xanchor="left" if xshift >= 0 else "right",
+            yanchor="middle",
+            xshift=xshift,
+            yshift=yshift,
+            bgcolor="rgba(0,0,0,0)",
+            bordercolor="rgba(0,0,0,0)",
+            font=dict(size=font_size),
+        )
+
+
+NAME_MAP = {
+    "year_sum": "年計（12ヶ月累計）",
+    "yoy": "YoY（前年同月比）",
+    "delta": "Δ（前月差）",
+    "slope6m": "直近6ヶ月の傾き",
+    "std6m": "直近6ヶ月の変動",
+    "slope_beta": "直近Nの傾き",
+    "hhi_share": "HHI寄与度",
+}
+
+
 # ---------------- Sidebar ----------------
 st.sidebar.title(APP_TITLE)
 page = st.sidebar.radio(
@@ -411,6 +570,15 @@ elif page == "比較ビュー":
             horizontal=True,
             index=0,
         )
+    c9, c10, c11, c12 = st.columns([1.2, 1.5, 1.5, 1.5])
+    with c9:
+        enable_label_avoid = st.checkbox("ラベル衝突回避", value=True)
+    with c10:
+        label_gap_px = st.slider("ラベル最小間隔(px)", 8, 24, 12)
+    with c11:
+        label_max = st.slider("ラベル最大件数", 5, 20, 12)
+    with c12:
+        alternate_side = st.checkbox("ラベル左右交互配置", value=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
     params = {
@@ -485,8 +653,6 @@ elif page == "比較ビュー":
     theme_is_dark = st.get_option("theme.base") == "dark"
     HALO = "#ffffff" if theme_is_dark else "#222222"
     SZ = 6
-    show_keynode_labels = True
-
     if node_mode == "自動":
         step = marker_step(df_main["month"])
         df_nodes = (
@@ -519,23 +685,35 @@ elif page == "比較ビュー":
             customdata=np.stack([d["display_name"]], axis=-1),
         )
 
-    if show_keynode_labels and node_mode != "非表示":
-        for _, r in df_nodes.groupby("display_name").tail(1).iterrows():
-            fig.add_annotation(
-                x=r["month"],
-                y=r["year_sum"],
-                text=f"{r['year_sum']:,.0f}（{r['month']:%Y-%m}）",
-                showarrow=True,
-                arrowhead=2,
-                arrowsize=1,
-                arrowwidth=1,
-                ax=8,
-                ay=-12,
-                bgcolor="rgba(0,0,0,0)",
-                bordercolor="rgba(0,0,0,0)",
-                borderwidth=0,
-                font=dict(size=11),
+    if node_mode != "非表示":
+        if enable_label_avoid:
+            add_latest_labels_no_overlap(
+                fig,
+                df_main,
+                label_col="display_name",
+                x_col="month",
+                y_col="year_sum",
+                max_labels=label_max,
+                min_gap_px=label_gap_px,
+                alternate_side=alternate_side,
             )
+        else:
+            for _, r in df_nodes.groupby("display_name").tail(1).iterrows():
+                fig.add_annotation(
+                    x=r["month"],
+                    y=r["year_sum"],
+                    text=f"{r['year_sum']:,.0f}（{r['month']:%Y-%m}）",
+                    showarrow=True,
+                    arrowhead=2,
+                    arrowsize=1,
+                    arrowwidth=1,
+                    ax=8,
+                    ay=-12,
+                    bgcolor="rgba(0,0,0,0)",
+                    bordercolor="rgba(0,0,0,0)",
+                    borderwidth=0,
+                    font=dict(size=11),
+                )
 
     n_months = (
         df_main["month"].max().year * 12
@@ -800,46 +978,83 @@ elif page == "相関分析":
     st.header("相関分析")
     end_m = end_month_selector(st.session_state.data_year, key="corr_end_month")
     snapshot = latest_yearsum_snapshot(st.session_state.data_year, end_m)
+
+    metric_opts = ["year_sum", "yoy", "delta", "slope_beta", "slope6m", "std6m", "hhi_share"]
     metrics = st.multiselect(
-        "相関を見る指標",
-        ["year_sum", "yoy", "delta", "slope_beta"],
-        default=["year_sum", "yoy", "delta"],
+        "指標",
+        [m for m in metric_opts if m in snapshot.columns],
+        default=[m for m in ["year_sum", "yoy", "delta", "slope_beta"] if m in snapshot.columns],
     )
+    method = st.radio(
+        "相関の種類",
+        ["pearson", "spearman"],
+        horizontal=True,
+        format_func=lambda x: "Pearson" if x == "pearson" else "Spearman",
+    )
+    winsor_pct = st.slider("外れ値丸め(%)", 0.0, 5.0, 1.0)
+    log_enable = st.checkbox("ログ変換", value=False)
+
     if metrics:
-        corr = snapshot[metrics].corr(method="pearson")
-        fig_corr = px.imshow(
-            corr, color_continuous_scale="RdBu_r", zmin=-1, zmax=1, text_auto=True
-        )
+        df_plot = snapshot.copy()
+        df_plot = winsorize_frame(df_plot, metrics, p=winsor_pct / 100)
+        df_plot = maybe_log1p(df_plot, metrics, log_enable)
+        tbl = corr_table(df_plot, metrics, method=method)
+
+        st.subheader("相関の要点")
+        for line in narrate_top_insights(tbl, NAME_MAP):
+            st.write("・", line)
+        sig_cnt = int((tbl["sig"] == "有意(95%)").sum())
+        weak_cnt = int((tbl["r"].abs() < 0.2).sum())
+        st.write(f"統計的に有意な相関: {sig_cnt} 組")
+        st.write(f"|r|<0.2 の組み合わせ: {weak_cnt} 組")
+
+        st.subheader("相関ヒートマップ")
+        st.caption("右上=強い正、左下=強い負、白=関係薄")
+        corr = df_plot[metrics].corr(method=method)
+        fig_corr = px.imshow(corr, color_continuous_scale="RdBu_r", zmin=-1, zmax=1, text_auto=True)
         st.plotly_chart(fig_corr, use_container_width=True, config=PLOTLY_CONFIG)
 
-        fig_scatter = px.scatter_matrix(
-            snapshot,
-            dimensions=metrics,
-            hover_data=["product_code", "product_name"],
-        )
-        st.plotly_chart(fig_scatter, use_container_width=True, config=PLOTLY_CONFIG)
-
-        if len(metrics) >= 2:
-            x_col, y_col = metrics[0], metrics[1]
-            df_xy = snapshot[[x_col, y_col]].dropna()
-            if not df_xy.empty:
-                slope, intercept = np.polyfit(df_xy[x_col], df_xy[y_col], 1)
-                r = df_xy[x_col].corr(df_xy[y_col])
-                r2 = r ** 2
-                fig_reg = px.scatter(
-                    df_xy,
-                    x=x_col,
-                    y=y_col,
-                    hover_data=["product_code", "product_name"],
-                )
-                xs = np.linspace(df_xy[x_col].min(), df_xy[x_col].max(), 100)
-                fig_reg.add_trace(
-                    go.Scatter(x=xs, y=intercept + slope * xs, mode="lines", name="回帰")
-                )
-                st.plotly_chart(fig_reg, use_container_width=True, config=PLOTLY_CONFIG)
-                st.caption(f"傾き {slope:.3f} / r {r:.3f} / R² {r2:.3f}")
+        st.subheader("ペア・エクスプローラ")
+        c1, c2 = st.columns(2)
+        with c1:
+            x_col = st.selectbox("指標X", metrics, index=0)
+        with c2:
+            y_col = st.selectbox("指標Y", metrics, index=1 if len(metrics) > 1 else 0)
+        df_xy = df_plot[[x_col, y_col, "product_name", "product_code"]].dropna()
+        if not df_xy.empty:
+            m, b, r2 = fit_line(df_xy[x_col], df_xy[y_col])
+            r = df_xy[x_col].corr(df_xy[y_col], method=method)
+            lo, hi = fisher_ci(r, len(df_xy))
+            fig_sc = px.scatter(df_xy, x=x_col, y=y_col, hover_data=["product_code", "product_name"])
+            xs = np.linspace(df_xy[x_col].min(), df_xy[x_col].max(), 100)
+            fig_sc.add_trace(go.Scatter(x=xs, y=m * xs + b, mode="lines", name="回帰"))
+            fig_sc.add_annotation(
+                x=0.99,
+                y=0.01,
+                xref="paper",
+                yref="paper",
+                xanchor="right",
+                yanchor="bottom",
+                text=f"r={r:.2f} (95%CI [{lo:.2f},{hi:.2f}])<br>R²={r2:.2f}",
+                showarrow=False,
+                align="right",
+                bgcolor="rgba(255,255,255,0.6)",
+            )
+            resid = np.abs(df_xy[y_col] - (m * df_xy[x_col] + b))
+            outliers = df_xy.loc[resid.nlargest(3).index]
+            for _, row in outliers.iterrows():
+                label = row["product_name"] or row["product_code"]
+                fig_sc.add_annotation(x=row[x_col], y=row[y_col], text=label, showarrow=True, arrowhead=1)
+            st.plotly_chart(fig_sc, use_container_width=True, config=PLOTLY_CONFIG)
+            st.caption("rは -1〜+1。0は関連が薄い。CIに0を含まなければ有意。")
+            st.caption("散布図の点が右上・左下に伸びれば正、右下・左上なら負。")
     else:
         st.info("指標を選択してください。")
+
+    with st.expander("相関の読み方"):
+        st.write("正の相関：片方が大きいほどもう片方も大きい")
+        st.write("負の相関：片方が大きいほどもう片方は小さい")
+        st.write("|r|<0.2は弱い、0.2-0.5はややあり、0.5-0.8は中~強、>0.8は非常に強い（目安）")
 
 # 6) アラート
 elif page == "アラート":
