@@ -444,15 +444,19 @@ def latest_yearsum_snapshot(df_year: pd.DataFrame, end_month: str) -> pd.DataFra
     ----------
     pd.DataFrame
         product_code, product_name, year_sum, rank, yoy, delta の列を持つ
-        スナップショット。
+        スナップショット。slope_beta 列が存在する場合は併せて含める。
     """
     snap = df_year[df_year["month"] == end_month].copy()
     if snap.empty:
-        return pd.DataFrame(columns=["product_code", "product_name", "year_sum", "rank", "yoy", "delta"])
+        return pd.DataFrame(
+            columns=["product_code", "product_name", "year_sum", "rank", "yoy", "delta", "slope_beta"]
+        )
     snap = snap.dropna(subset=["year_sum"])
     snap = snap.sort_values("year_sum", ascending=False)
     snap["rank"] = np.arange(1, len(snap) + 1)
     cols = ["product_code", "product_name", "year_sum", "rank", "yoy", "delta"]
+    if "slope_beta" in snap.columns:
+        cols.append("slope_beta")
     return snap[cols]
 
 
