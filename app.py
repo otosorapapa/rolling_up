@@ -313,75 +313,111 @@ elif page == "比較ビュー":
     search = st.text_input("検索ボックス", "")
     if search:
         snapshot = snapshot[snapshot["display_name"].str.contains(search, case=False, na=False)]
-
-    # ---- コントロール ----
-    band_mode = st.radio(
-        "バンドモード",
-        ["金額指定", "商品指定(2)", "パーセンタイル", "順位帯", "ターゲット近傍"],
-        index=["金額指定", "商品指定(2)", "パーセンタイル", "順位帯", "ターゲット近傍"].index(params.get("band_mode", "金額指定")),
-        horizontal=True,
-    )
+    # ---- 操作バー＋グラフ密着カード ----
+    hist_fig = px.histogram(snapshot, x="year_sum")
 
     band_params = params.get("band_params", {})
-    if band_mode == "金額指定" and not snapshot.empty:
-        mn, mx = float(snapshot["year_sum"].min()), float(snapshot["year_sum"].max())
-        low, high = band_params.get("low_amount", mn), band_params.get("high_amount", mx)
-        low, high = st.slider("金額レンジ", min_value=0.0, max_value=mx, value=(low, high), step=max(mx/100,1.0))
-        band_params = {"low_amount": low, "high_amount": high}
-    elif band_mode == "商品指定(2)" and not snapshot.empty:
-        opts = (snapshot["product_code"].fillna("") + " | " + snapshot["display_name"].fillna("")).tolist()
-        opts = [o for o in opts if o.strip() != "|"]
-        prod_a = st.selectbox("商品A", opts, index=0)
-        prod_b = st.selectbox("商品B", opts, index=1 if len(opts) > 1 else 0)
-        band_params = {"prod_a": prod_a.split(" | ")[0], "prod_b": prod_b.split(" | ")[0]}
-    elif band_mode == "パーセンタイル" and not snapshot.empty:
-        p_low, p_high = band_params.get("p_low", 0), band_params.get("p_high", 100)
-        p_low, p_high = st.slider("百分位(%)", 0, 100, (int(p_low), int(p_high)))
-        band_params = {"p_low": p_low, "p_high": p_high}
-    elif band_mode == "順位帯" and not snapshot.empty:
-        max_rank = int(snapshot["rank"].max()) if not snapshot.empty else 1
-        r_low, r_high = band_params.get("r_low", 1), band_params.get("r_high", max_rank)
-        r_low, r_high = st.slider("順位", 1, max_rank, (int(r_low), int(r_high)))
-        band_params = {"r_low": r_low, "r_high": r_high}
-    else:
-        opts = (snapshot["product_code"] + " | " + snapshot["display_name"]).tolist()
-        tlabel = st.selectbox("基準商品", opts, index=0) if opts else ""
-        tcode = tlabel.split(" | ")[0] if tlabel else ""
-        by = st.radio("幅指定", ["金額", "%"], horizontal=True)
-        width_default = 100000.0 if by == "金額" else 0.1
-        width = st.number_input("幅", value=float(band_params.get("width", width_default)), step=width_default/10)
-        band_params = {"target_code": tcode, "by": "amt" if by == "金額" else "pct", "width": width}
+    max_amount = float(snapshot["year_sum"].max()) if not snapshot.empty else 0.0
+    low0 = band_params.get("low_amount", float(snapshot["year_sum"].min()) if not snapshot.empty else 0.0)
+    high0 = band_params.get("high_amount", max_amount)
 
-    apply_mode = st.radio(
-        "適用方式",
-        ["バンド内のみ表示", "バンド外ゴースト"],
-        index=["バンド内のみ表示", "バンド外ゴースト"].index(params.get("apply_mode", "バンド内のみ表示")),
-        horizontal=True,
+    st.markdown(
+        """
+<style>
+.chart-card { position: relative; margin:.25rem 0 1rem; border-radius:12px;
+  border:1px solid rgba(255,255,255,.08); background:var(--background-color,#0f172a); }
+.chart-toolbar { position: sticky; top: -1px; z-index: 5;
+  display:flex; gap:.6rem; flex-wrap:wrap; align-items:center;
+  padding:.35rem .6rem; border-bottom:1px solid rgba(255,255,255,.08); }
+/* Streamlit標準の下マージンを除去（ここが距離の主因） */
+.chart-toolbar .stRadio, .chart-toolbar .stSelectbox, .chart-toolbar .stSlider,
+.chart-toolbar .stMultiSelect, .chart-toolbar .stCheckbox { margin-bottom:0 !important; }
+.chart-body { padding:.15rem .4rem .4rem; }
+</style>
+        """,
+        unsafe_allow_html=True,
     )
 
-    # 自動バンド提案ボタン
-    col_auto1, col_auto2, col_auto3 = st.columns(3)
-    with col_auto1:
-        if st.button("メディアン±10%") and not snapshot.empty:
-            med = snapshot["year_sum"].median()
-            band_mode = "金額指定"
-            band_params = {"low_amount": med * 0.9, "high_amount": med * 1.1}
-    with col_auto2:
-        if st.button("Top10%") and not snapshot.empty:
-            band_mode = "パーセンタイル"
-            band_params = {"p_low": 90, "p_high": 100}
-    with col_auto3:
-        if st.button("IQR") and not snapshot.empty:
-            q1 = snapshot["year_sum"].quantile(0.25)
-            q3 = snapshot["year_sum"].quantile(0.75)
-            band_mode = "金額指定"
-            band_params = {"low_amount": q1, "high_amount": q3}
+    st.markdown('<section class="chart-card" id="line-compare">', unsafe_allow_html=True)
+
+    st.markdown('<div class="chart-toolbar">', unsafe_allow_html=True)
+    c1, c2, c3, c4, c5 = st.columns([1.2, 1.6, 1.1, 1.0, 0.9])
+    with c1:
+        period = st.radio("期間", ["12ヶ月", "24ヶ月", "36ヶ月"], horizontal=True, index=1)
+    with c2:
+        node_mode = st.radio("ノード表示", ["自動", "主要ノードのみ", "すべて", "非表示"], horizontal=True, index=0)
+    with c3:
+        hover_mode = st.radio("ホバー", ["個別", "同月まとめ"], horizontal=True, index=0)
+    with c4:
+        op_mode = st.radio("操作", ["パン", "ズーム", "選択"], horizontal=True, index=0)
+    with c5:
+        peak_on = st.checkbox("ピーク表示", value=False)
+
+    c6, c7, c8 = st.columns([2.0, 1.9, 1.6])
+    with c6:
+        band_mode = st.radio(
+            "バンド",
+            ["金額指定", "商品指定(2)", "パーセンタイル", "順位帯", "ターゲット近傍"],
+            horizontal=True,
+            index=["金額指定", "商品指定(2)", "パーセンタイル", "順位帯", "ターゲット近傍"].index(
+                params.get("band_mode", "金額指定")
+            ),
+        )
+    with c7:
+        band_params = params.get("band_params", {})
+        if band_mode == "金額指定" and not snapshot.empty:
+            low, high = st.slider(
+                "金額レンジ",
+                min_value=0.0,
+                max_value=max_amount,
+                value=(
+                    band_params.get("low_amount", low0),
+                    band_params.get("high_amount", high0),
+                ),
+                step=max(max_amount / 100, 1.0),
+            )
+            band_params = {"low_amount": low, "high_amount": high}
+        elif band_mode == "商品指定(2)" and not snapshot.empty:
+            opts = (
+                snapshot["product_code"].fillna("") + " | " + snapshot["display_name"].fillna("")
+            ).tolist()
+            opts = [o for o in opts if o.strip() != "|"]
+            prod_a = st.selectbox("商品A", opts, index=0)
+            prod_b = st.selectbox("商品B", opts, index=1 if len(opts) > 1 else 0)
+            band_params = {"prod_a": prod_a.split(" | ")[0], "prod_b": prod_b.split(" | ")[0]}
+        elif band_mode == "パーセンタイル" and not snapshot.empty:
+            p_low, p_high = band_params.get("p_low", 0), band_params.get("p_high", 100)
+            p_low, p_high = st.slider("百分位(%)", 0, 100, (int(p_low), int(p_high)))
+            band_params = {"p_low": p_low, "p_high": p_high}
+        elif band_mode == "順位帯" and not snapshot.empty:
+            max_rank = int(snapshot["rank"].max()) if not snapshot.empty else 1
+            r_low, r_high = band_params.get("r_low", 1), band_params.get("r_high", max_rank)
+            r_low, r_high = st.slider("順位", 1, max_rank, (int(r_low), int(r_high)))
+            band_params = {"r_low": r_low, "r_high": r_high}
+        else:
+            opts = (snapshot["product_code"] + " | " + snapshot["display_name"]).tolist()
+            tlabel = st.selectbox("基準商品", opts, index=0) if opts else ""
+            tcode = tlabel.split(" | ")[0] if tlabel else ""
+            by = st.radio("幅指定", ["金額", "%"], horizontal=True)
+            width_default = 100000.0 if by == "金額" else 0.1
+            width = st.number_input(
+                "幅", value=float(band_params.get("width", width_default)), step=width_default / 10
+            )
+            band_params = {"target_code": tcode, "by": "amt" if by == "金額" else "pct", "width": width}
+    with c8:
+        quick = st.radio(
+            "クイック絞り込み",
+            ["なし", "Top5", "Top10", "最新YoY上位", "直近6M伸長上位"],
+            horizontal=True,
+            index=0,
+        )
+    st.markdown('</div>', unsafe_allow_html=True)
 
     params = {
         "end_month": end_m,
         "band_mode": band_mode,
         "band_params": band_params,
-        "apply_mode": apply_mode,
+        "quick": quick,
     }
     st.session_state.compare_params = params
 
@@ -395,11 +431,6 @@ elif page == "比較ビュー":
     low, high = resolve_band(snapshot, mode_map[band_mode], band_params)
     codes = filter_products_by_band(snapshot, low, high)
 
-    quick = st.radio(
-        "クイック絞り込み",
-        ["なし", "Top5", "Top10", "最新YoY上位", "直近6M伸長上位"],
-        horizontal=True,
-    )
     if quick == "Top5":
         codes = snapshot.nlargest(5, "year_sum")["product_code"].tolist()
     elif quick == "Top10":
@@ -411,104 +442,7 @@ elif page == "比較ビュー":
     elif quick == "直近6M伸長上位":
         codes = top_growth_codes(year_df, end_m, window=6, top=10)
 
-    pin_opts = ["(なし)"] + (snapshot["product_code"] + " | " + snapshot["display_name"]).tolist()
-    pin_label = st.selectbox("基準商品ピン留め", pin_opts, index=0)
-    pin_code = pin_label.split(" | ")[0] if pin_label != "(なし)" else None
-    if pin_code and pin_code not in codes:
-        codes.insert(0, pin_code)
-
-    prev_month = (datetime.strptime(end_m, "%Y-%m") - pd.DateOffset(months=1)).strftime("%Y-%m")
-    prev_snap = latest_yearsum_snapshot(year_df, prev_month)
-    prev_codes = filter_products_by_band(prev_snap, low, high)
-    new_in = set(codes) - set(prev_codes)
-    left_out = set(prev_codes) - set(codes)
-
-    # 統計バッジ
-    if codes:
-        sub = snapshot[snapshot["product_code"].isin(codes)]
-        N, M = len(sub), len(snapshot)
-        med = sub["year_sum"].median()
-        mean = sub["year_sum"].mean()
-        p10 = sub["year_sum"].quantile(0.1)
-        p90 = sub["year_sum"].quantile(0.9)
-        st.caption(f"該当 {N}/{M} 件 ( {N/M*100:.1f}% ) / 中央値 {int(med):,} / 平均 {int(mean):,} / P10 {int(p10):,} / P90 {int(p90):,}")
-
-    # ---- ヒストグラム ----
-    hist_fig = px.histogram(snapshot, x="year_sum")
-    with st.expander("分布（オプション）", expanded=False):
-        st.plotly_chart(hist_fig, use_container_width=True, height=200, config=PLOTLY_CONFIG)
-
-    ghost_outside = []
-    if apply_mode == "バンド外ゴースト":
-        ghost_outside = snapshot[~snapshot["product_code"].isin(codes)]["product_code"].tolist()
-
-    # ---- 操作ツールバー ----
-    st.markdown(
-        """
-<style>
-/* カード（グラフ＋ツールバー） */
-.chart-card { position: relative; margin: .25rem 0 1rem; border-radius: 12px;
-  border: 1px solid rgba(255,255,255,.08); background: var(--background-color,#0f172a); }
-/* グラフ直上ツールバー：カード内でsticky */
-.chart-toolbar { position: sticky; top: -1px; z-index: 5;
-  display: flex; gap: .6rem; flex-wrap: wrap; align-items: center;
-  padding: .4rem .6rem; border-bottom: 1px solid rgba(255,255,255,.08); }
-/* コンパクト化：Streamlit標準余白を消す */
-.chart-toolbar .stRadio, .chart-toolbar .stSelectbox, .chart-toolbar .stSlider,
-.chart-toolbar .stMultiSelect, .chart-toolbar .stCheckbox { margin-bottom: 0 !important; }
-.chart-toolbar [data-baseweb="slider"] { padding-top: .1rem; padding-bottom: .1rem; }
-.chart-body { padding: .3rem .4rem .6rem; }
-</style>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.markdown('<section class="chart-card" id="line-compare">', unsafe_allow_html=True)
-    st.markdown('<div class="chart-toolbar">', unsafe_allow_html=True)
-    c1, c2, c3, c4, c5 = st.columns([1.4, 1.8, 1.1, 1.2, 0.9])
-    with c1:
-        period = st.radio("期間", ["12ヶ月", "24ヶ月", "36ヶ月"], index=1, horizontal=True)
-    with c2:
-        node_mode = st.radio("ノード表示", ["自動", "主要ノードのみ", "すべて", "非表示"], index=0, horizontal=True)
-    with c3:
-        hover_mode = st.radio("ホバー表示", ["個別", "同月まとめ"], index=1, horizontal=True)
-    with c4:
-        op_mode = st.radio("操作モード", ["パン", "ズーム", "選択"], index=0, horizontal=True)
-    with c5:
-        peak_on = st.checkbox("ピーク表示", value=False)
-    c6, c7 = st.columns([1.6, 2.4])
-    with c6:
-        pos_thr = st.slider("傾きしきい値（%/月）", 0.01, 0.10, 0.03, 0.01)
-    with c7:
-        group_view = st.radio("表示グループ", ["すべて", "明日の商品", "昨日の商品", "横ばい"], index=0, horizontal=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # ---- トレンド分類 ----
-    trend_groups = {}
-    df_sorted = st.session_state.data_year.sort_values("month")
-    for code, g in df_sorted.groupby("product_code"):
-        res = trend_last6(g["year_sum"])
-        ratio = res["ratio"]
-        if ratio >= pos_thr:
-            group = "明日の商品"
-        elif ratio <= -pos_thr:
-            group = "昨日の商品"
-        else:
-            group = "横ばい"
-        trend_groups[code] = group
-
-    counts = {"明日の商品": 0, "昨日の商品": 0, "横ばい": 0}
-    for g in trend_groups.values():
-        counts[g] = counts.get(g, 0) + 1
-    st.caption(
-        f"明日 {counts['明日の商品']}｜昨日 {counts['昨日の商品']}｜横ばい {counts['横ばい']}"
-    )
-    if group_view != "すべて":
-        ghost_outside = ghost_outside + [c for c in codes if trend_groups.get(c, "横ばい") != group_view]
-        codes = [c for c in codes if trend_groups.get(c, "横ばい") == group_view]
-    all_codes = codes + ghost_outside
-
-    # ---- Overlay ----
-    df_long, _ = get_yearly_series(year_df, all_codes)
+    df_long, _ = get_yearly_series(year_df, codes)
     df_long["month"] = pd.to_datetime(df_long["month"])
     df_long["display_name"] = df_long["product_name"].fillna(df_long["product_code"])
 
@@ -519,7 +453,7 @@ elif page == "比較ビュー":
         df_long = df_long[df_long["month"] >= start_date]
 
     # TopN 制限
-    main_codes, ghost_codes = codes, ghost_outside.copy()
+    main_codes = codes
     max_lines = 15
     if len(codes) > max_lines:
         top_order = (
@@ -527,14 +461,8 @@ elif page == "比較ビュー":
             .sort_values("year_sum", ascending=False)["product_code"].tolist()
         )
         main_codes = top_order[:max_lines]
-        if pin_code and pin_code not in main_codes:
-            main_codes = main_codes[: max_lines - 1] + [pin_code]
-        ghost_codes = ghost_outside + [c for c in codes if c not in main_codes]
 
     df_main = df_long[df_long["product_code"].isin(main_codes)]
-
-    node_size = st.radio("ノードサイズ", ["小", "中", "大"], index=1, horizontal=True)
-    show_keynode_labels = st.checkbox("主要ノードラベル", value=True)
 
     fig = px.line(
         df_main,
@@ -544,23 +472,6 @@ elif page == "比較ビュー":
         custom_data=["display_name"],
     )
     fig.add_hrect(y0=low, y1=high, fillcolor="green", opacity=0.12, line_width=0)
-
-    if ghost_codes:
-        df_ghost = df_long[df_long["product_code"].isin(ghost_codes)]
-        ghost_fig = px.line(
-            df_ghost,
-            x="month",
-            y="year_sum",
-            color="display_name",
-            custom_data=["display_name"],
-        ).update_traces(
-            line=dict(width=1.5, color="gray"),
-            opacity=0.15,
-            showlegend=False,
-            hovertemplate="<b>%{customdata[0]}</b><br>月：%{x|%Y-%m}<br>年計：%{y:,.0f} 円<extra></extra>",
-        )
-        for t in ghost_fig.data:
-            fig.add_trace(t)
 
     fig.update_traces(
         mode="lines",
@@ -573,7 +484,8 @@ elif page == "比較ビュー":
 
     theme_is_dark = st.get_option("theme.base") == "dark"
     HALO = "#ffffff" if theme_is_dark else "#222222"
-    SZ = {"小": 4, "中": 6, "大": 8}[node_size]
+    SZ = 6
+    show_keynode_labels = True
 
     if node_mode == "自動":
         step = marker_step(df_main["month"])
@@ -666,31 +578,6 @@ elif page == "比較ビュー":
     else:
         fig.update_layout(hovermode="x unified", hoverlabel=dict(align="left"))
 
-    pin_name = None
-    if pin_code:
-        row = snapshot[snapshot["product_code"] == pin_code]
-        if not row.empty:
-            pin_name = row["display_name"].iloc[0]
-    if pin_name:
-        fig.for_each_trace(lambda t: t.update(line=dict(width=3), opacity=1.0) if t.name == pin_name else None)
-
-    last_df = df_main.sort_values("month").groupby("display_name").tail(1)
-    for idx, r in last_df.iterrows():
-        yshift = 8 if idx % 2 == 0 else -8
-        fig.add_annotation(
-            x=r["month"],
-            y=r["year_sum"],
-            text=f"{r['display_name']}：{r['year_sum']:,.0f}",
-            showarrow=False,
-            xanchor="left",
-            yanchor="middle",
-            font=dict(size=11),
-            bgcolor="rgba(0,0,0,0)",
-            bordercolor="rgba(0,0,0,0)",
-            borderwidth=0,
-            yshift=yshift,
-        )
-
     if peak_on:
         for name, grp in df_main.groupby("display_name"):
             max_row = grp.loc[grp["year_sum"].idxmax()]
@@ -719,15 +606,12 @@ elif page == "比較ビュー":
             )
 
     st.markdown('<div class="chart-body">', unsafe_allow_html=True)
-    st.plotly_chart(
-        fig,
-        use_container_width=True,
-        config=PLOTLY_CONFIG,
-    )
+    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
     st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('</section>', unsafe_allow_html=True)
+
     st.caption("凡例クリックで表示切替、ダブルクリックで単独表示。ドラッグでズーム/パン、右上メニューからPNG/CSV取得可。")
 
-    # PNG/CSVエクスポート
     snap_export = snapshot[snapshot["product_code"].isin(main_codes)]
     st.download_button(
         "CSVエクスポート",
@@ -741,7 +625,8 @@ elif page == "比較ビュー":
     except Exception:
         pass
 
-    st.markdown('</section>', unsafe_allow_html=True)
+    with st.expander("分布（オプション）", expanded=False):
+        st.plotly_chart(hist_fig, use_container_width=True)
 
     # ---- Small Multiples ----
     st.subheader("スモールマルチプル")
@@ -818,10 +703,7 @@ elif page == "比較ビュー":
                 config=PLOTLY_CONFIG,
             )
 
-    if new_in or left_out:
-        st.info(f"新規侵入: {', '.join(sorted(new_in)) or 'なし'} / 離脱: {', '.join(sorted(left_out)) or 'なし'}")
-
-# 5) SKU詳細
+    # 5) SKU詳細
 elif page == "SKU詳細":
     require_data()
     st.header("SKU 詳細")
