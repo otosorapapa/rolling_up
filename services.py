@@ -592,3 +592,64 @@ def trend_last6(series: pd.Series) -> dict:
     slope = np.polyfit(x, s.values, 1)[0]
     ratio = slope / max(1.0, s.mean())
     return {"slope": float(slope), "ratio": float(ratio), "group": None}
+
+
+def slope_last_n(y: pd.Series, n: int = 6):
+    """末尾n点で単回帰の傾き（円/月）と%/月を返す。"""
+    s = y.dropna().tail(n)
+    if len(s) < 3:
+        return np.nan, np.nan
+    x = np.arange(len(s), dtype=float)
+    m, _ = np.polyfit(x, s.values.astype(float), 1)
+    ratio = m / max(1.0, s.mean())  # %/月相当
+    return float(m), float(ratio)
+
+
+def slopes_snapshot(df_long: pd.DataFrame, x_col="month", y_col="year_sum",
+                    key_col="product_code", n=6):
+    """商品ごと末尾n点の傾きを一括算出。"""
+    g = df_long.sort_values(x_col).groupby(key_col, as_index=False)
+    rows = []
+    for k, d in g:
+        m, r = slope_last_n(d[y_col], n=n)
+        rows.append({key_col: k, "slope_yen": m, "slope_ratio": r})
+    snap = pd.DataFrame(rows)
+    # zスコア
+    mu, sd = snap["slope_yen"].mean(), snap["slope_yen"].std(ddof=0) or 1.0
+    snap["slope_z"] = (snap["slope_yen"] - mu) / sd
+    return snap
+
+
+def shape_flags(df_long: pd.DataFrame, key_col="product_code",
+                x_col="month", y_col="year_sum", window=12, alpha_ratio=0.02, amp_ratio=0.06):
+    """
+    '急勾配'：|傾きz| >= しきい値（後述UI）
+    '山'：window内で最大点を中心に、前半の平均差分>+α かつ 後半<-α、
+          かつ (最大-両端)/平均 >= 振幅比
+    '谷'：最小点を中心に、前半<-α かつ 後半>+α、
+          かつ (両端-最小)/平均 >= 振幅比
+    αは平均値×alpha_ratio（月あたり）、振幅は系列平均に対する比。
+    """
+    out = []
+    for code, d in df_long.sort_values(x_col).groupby(key_col):
+        s = d[y_col].dropna().tail(window)
+        if len(s) < max(6, window//2):
+            out.append({key_col: code, "is_mountain": False, "is_valley": False})
+            continue
+        s_smooth = s.rolling(3, center=True, min_periods=1).mean()
+        m = s_smooth.mean()
+        alpha = m * alpha_ratio
+        # 山
+        tmax = s_smooth.idxmax()
+        pre = s_smooth.loc[:tmax].diff().dropna()
+        post = s_smooth.loc[tmax:].diff().dropna()
+        is_mtn = (pre.mean() > alpha) and (post.mean() < -alpha) and \
+                 ((s_smooth.max() - (s_smooth.iloc[0]+s_smooth.iloc[-1])/2) / max(1.0, m) >= amp_ratio)
+        # 谷
+        tmin = s_smooth.idxmin()
+        pre2 = s_smooth.loc[:tmin].diff().dropna()
+        post2 = s_smooth.loc[tmin:].diff().dropna()
+        is_val = (pre2.mean() < -alpha) and (post2.mean() > alpha) and \
+                 (((s_smooth.iloc[0]+s_smooth.iloc[-1])/2 - s_smooth.min()) / max(1.0, m) >= amp_ratio)
+        out.append({key_col: code, "is_mountain": bool(is_mtn), "is_valley": bool(is_val)})
+    return pd.DataFrame(out)
