@@ -29,15 +29,15 @@ def _ensure_css():
         """
 <style>
 .chart-card { position: relative; margin:.25rem 0 1rem; border-radius:12px;
-  border:1px solid rgba(113,178,255,.25); background:var(--background-color,#0f172a); }
+  border:1px solid var(--color-primary); background:var(--card-bg,#fff); }
 .chart-toolbar { position: sticky; top: -1px; z-index: 5;
   display:flex; gap:.6rem; flex-wrap:wrap; align-items:center;
-  padding:.35rem .6rem; background: linear-gradient(180deg, rgba(113,178,255,.20), rgba(113,178,255,.10));
-  border-bottom:1px solid rgba(113,178,255,.35); }
+  padding:.35rem .6rem; background: linear-gradient(180deg, rgba(0,58,112,.08), rgba(0,58,112,.02));
+  border-bottom:1px solid var(--color-primary); }
 .chart-toolbar .stRadio, .chart-toolbar .stSelectbox, .chart-toolbar .stSlider,
 .chart-toolbar .stMultiSelect, .chart-toolbar .stCheckbox { margin-bottom:0 !important; }
-.chart-toolbar .stRadio > label, .chart-toolbar .stCheckbox > label { color:#e6f2ff; }
-.chart-toolbar .stSlider label { color:#e6f2ff; }
+.chart-toolbar .stRadio > label, .chart-toolbar .stCheckbox > label { color:#003a70; }
+.chart-toolbar .stSlider label { color:#003a70; }
 .chart-body { padding:.15rem .4rem .4rem; }
 </style>
 """,

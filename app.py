@@ -11,8 +11,16 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 
-# Apply colorblind-friendly palette across figures
-px.defaults.color_discrete_sequence = px.colors.qualitative.Safe
+# McKinsey inspired palette
+MCKINSEY_PALETTE = [
+    "#003a70",  # deep navy
+    "#8fb8de",  # light blue
+    "#5b6770",  # grey
+    "#b1b3b3",  # light grey
+    "#243746",  # dark slate
+]
+# Apply palette across figures
+px.defaults.color_discrete_sequence = MCKINSEY_PALETTE
 
 PLOTLY_CONFIG = {
     "locale": "ja",
@@ -55,6 +63,37 @@ from core.chart_card import toolbar_sku_detail, build_chart_card
 
 APP_TITLE = "売上年計（12カ月移動累計）ダッシュボード"
 st.set_page_config(page_title=APP_TITLE, layout="wide", initial_sidebar_state="expanded")
+
+# Global styling to evoke McKinsey's understated aesthetic
+st.markdown(
+    """
+    <style>
+    :root {
+        --color-primary: #003a70;
+        --color-accent: #8fb8de;
+        --background-color: #f2f4f5;
+        --card-bg: #ffffff;
+    }
+    [data-testid="stApp"] {
+        background-color: var(--background-color);
+        font-family: "Helvetica Neue", Arial, sans-serif;
+        color: #1b1b1d;
+    }
+    .stSidebar {
+        background-color: var(--color-primary);
+    }
+    .stSidebar, .stSidebar a {
+        color: white !important;
+    }
+    .stButton>button {
+        background-color: var(--color-primary);
+        color: white;
+        border-radius: 4px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ---------------- Session State ----------------
 if "data_monthly" not in st.session_state:
