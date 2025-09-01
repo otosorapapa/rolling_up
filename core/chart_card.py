@@ -371,6 +371,9 @@ def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None):
             alternate_side=tb["alt_side"],
         )
 
+    if "_apply_global_user_style" in st.session_state:
+        fig = st.session_state["_apply_global_user_style"](fig)
+
     st.plotly_chart(
         fig,
         use_container_width=True,
