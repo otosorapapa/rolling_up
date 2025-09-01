@@ -71,24 +71,31 @@ st.markdown(
     :root {
         --color-primary: #003a70;
         --color-accent: #8fb8de;
-        --background-color: #f2f4f5;
+        --background-color: #ffffff;
         --card-bg: #ffffff;
+        --text-color: #1b1b1d;
     }
     [data-testid="stApp"] {
         background-color: var(--background-color);
         font-family: "Helvetica Neue", Arial, sans-serif;
-        color: #1b1b1d;
+        color: var(--text-color);
+        line-height: 1.6;
     }
     .stSidebar {
         background-color: var(--color-primary);
     }
     .stSidebar, .stSidebar a {
-        color: white !important;
+        color: #ffffff !important;
     }
     .stButton>button {
         background-color: var(--color-primary);
-        color: white;
+        color: #ffffff;
         border-radius: 4px;
+    }
+    .stAlert {
+        background-color: #f0f4f8;
+        border-left: 4px solid var(--color-accent);
+        color: var(--text-color);
     }
     </style>
     """,
