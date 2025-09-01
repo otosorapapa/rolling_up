@@ -60,7 +60,7 @@ def apply_elegant_theme(fig: go.Figure, theme: str = "dark") -> go.Figure:
     )
     fig.update_traces(selector=dict(mode="lines"), line=dict(width=2.0))
     fig.update_traces(
-        selector=lambda t: "markers" in (t.mode or ""),
+        selector=lambda t: "markers" in getattr(t, "mode", ""),
         marker=dict(size=5, line=dict(width=1, color="white")),
     )
     return fig
