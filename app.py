@@ -79,23 +79,154 @@ from core.chart_card import toolbar_sku_detail, build_chart_card
 APP_TITLE = "売上年計（12カ月移動累計）ダッシュボード"
 st.set_page_config(page_title=APP_TITLE, layout="wide", initial_sidebar_state="expanded")
 
-# High contrast theme
-st.markdown(
-    """
-<style>
-:root{ --bg:#0F172A; --panel:#111827; --text:#E6F2FF; --accent:#3BB3E6; }
-[data-testid="stAppViewContainer"]{ background:var(--bg); color:var(--text); }
-[data-testid="stSidebar"]{ background:linear-gradient(180deg,#0B3A6E 0%, #08325D 100%); color:#fff; }
-[data-testid="stSidebar"] *{ color:#fff !important; }
-.chart-card{ background:var(--panel); border:1px solid rgba(255,255,255,.12); border-radius:12px; }
-.chart-toolbar{ background:linear-gradient(180deg, rgba(59,179,230,.18), rgba(59,179,230,.10));
-  border-bottom:1px solid rgba(59,179,230,.40); }
-h1,h2,h3{ color:var(--text); font-weight:800; letter-spacing:.4px; }
-p,li,span,div{ color:var(--text); }
-</style>
-""",
-    unsafe_allow_html=True,
-)
+# ===== グローバル テーマ状態 =====
+st.session_state.setdefault("ui_theme", "dark")  # "dark" | "light"
+
+# ===== テーマ切替トグル =====
+col_t1, col_t2 = st.columns([1, 9])
+with col_t1:
+    theme_choice = st.segmented_control(
+        "テーマ",
+        options=["dark", "light"],
+        selection_mode="single",
+        default=st.session_state["ui_theme"],
+    )
+    if theme_choice != st.session_state["ui_theme"]:
+        st.session_state["ui_theme"] = theme_choice
+        st.rerun()
+
+# ===== テーマ別 高コントラストCSS =====
+if st.session_state["ui_theme"] == "dark":
+    st.markdown(
+        """
+    <style>
+      :root{ --bg:#0F172A; --panel:#111827; --text:#E6F2FF; --muted:#B8C4D9; --accent:#3BB3E6; --grid:rgba(255,255,255,.10); }
+      [data-testid="stAppViewContainer"]{ background:var(--bg); color:var(--text); }
+      [data-testid="stSidebar"]{ background:linear-gradient(180deg,#0B3A6E 0%, #08325D 100%); color:#fff; }
+      [data-testid="stSidebar"] *{ color:#fff !important; }
+      .chart-card{ background:var(--panel); border:1px solid rgba(255,255,255,.12); border-radius:12px; }
+      .chart-toolbar{ background:linear-gradient(180deg, rgba(59,179,230,.18), rgba(59,179,230,.10));
+                      border-bottom:1px solid rgba(59,179,230,.40); }
+      h1,h2,h3{ color:var(--text); font-weight:800; letter-spacing:.4px; }
+    </style>""",
+        unsafe_allow_html=True,
+    )
+else:
+    st.markdown(
+        """
+    <style>
+      :root{ --bg:#FFFFFF; --panel:#F6F7FB; --text:#0B1324; --muted:#5A6B85; --accent:#3BB3E6; --grid:rgba(11,19,36,.12); }
+      [data-testid="stAppViewContainer"]{ background:var(--bg); color:var(--text); }
+      [data-testid="stSidebar"]{ background:#0B3A6E; color:#fff; }
+      [data-testid="stSidebar"] *{ color:#fff !important; }
+      .chart-card{ background:var(--panel); border:1px solid rgba(11,19,36,.10); border-radius:12px; }
+      .chart-toolbar{ background:linear-gradient(180deg, rgba(59,179,230,.12), rgba(59,179,230,.06));
+                      border-bottom:1px solid rgba(59,179,230,.30); }
+      h1,h2,h3{ color:var(--text); font-weight:800; letter-spacing:.4px; }
+    </style>""",
+        unsafe_allow_html=True,
+    )
+
+# ===== 全ページ共通：個人カスタマイズ設定 =====
+st.session_state.setdefault("style_prefs_global", {})  # 全ページに効く
+
+with st.expander("🎨 表示カスタマイズ（全ページ適用）", expanded=False):
+    gp = st.session_state["style_prefs_global"]
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        gp["plot_bgcolor"] = st.color_picker(
+            "プロット背景",
+            value=gp.get("plot_bgcolor", None)
+            or ("#0F172A" if st.session_state["ui_theme"] == "dark" else "#FFFFFF"),
+        )
+        gp["paper_bgcolor"] = st.color_picker(
+            "紙背景",
+            value=gp.get("paper_bgcolor", None)
+            or ("#0F172A" if st.session_state["ui_theme"] == "dark" else "#FFFFFF"),
+        )
+        gp["text_color"] = st.color_picker(
+            "文字色",
+            value=gp.get("text_color", None)
+            or ("#E6F2FF" if st.session_state["ui_theme"] == "dark" else "#0B1324"),
+        )
+    with c2:
+        gp["grid_color"] = st.color_picker(
+            "グリッド色",
+            value=gp.get("grid_color", "var(--grid)"),
+        )
+        gp["palette"] = st.selectbox(
+            "カラーパレット",
+            ["Default", "Contrast", "Pastel", "Colorblind"],
+            index=["Default", "Contrast", "Pastel", "Colorblind"].index(
+                gp.get("palette", "Default")
+            ),
+        )
+        gp["legend_pos"] = st.selectbox(
+            "凡例位置",
+            ["右", "上", "下", "左"],
+            index=["右", "上", "下", "左"].index(gp.get("legend_pos", "右")),
+        )
+    with c3:
+        gp["line_width"] = st.slider(
+            "線の太さ", 0.8, 4.0, gp.get("line_width", 2.2)
+        )
+        gp["line_dash"] = st.selectbox(
+            "線スタイル",
+            ["実線", "点線", "破線", "点破線"],
+            index=["実線", "点線", "破線", "点破線"].index(
+                gp.get("line_dash", "実線")
+            ),
+        )
+        gp["marker_size"] = st.slider(
+            "ノードサイズ", 0, 12, gp.get("marker_size", 6)
+        )
+        gp["marker_symbol"] = st.selectbox(
+            "ノード形状",
+            ["circle", "square", "diamond", "cross", "triangle-up"],
+            index=["circle", "square", "diamond", "cross", "triangle-up"].index(
+                gp.get("marker_symbol", "circle")
+            ),
+        )
+        gp["marker_edge_c"] = st.color_picker(
+            "ノード縁色",
+            value=gp.get(
+                "marker_edge_c",
+                "#FFFFFF" if st.session_state["ui_theme"] == "dark" else "#0B1324",
+            ),
+        )
+        gp["marker_edge_w"] = st.slider(
+            "ノード縁太さ", 0.0, 3.0, gp.get("marker_edge_w", 1.0)
+        )
+    r1, r2 = st.columns(2)
+    with r1:
+        gp["show_grid"] = st.checkbox(
+            "グリッド表示", value=gp.get("show_grid", True)
+        )
+    with r2:
+        gp["bold_axis"] = st.checkbox(
+            "目盛・軸ラインを濃く", value=gp.get("bold_axis", False)
+        )
+
+    b1, b2, b3 = st.columns([1, 1, 1])
+    with b1:
+        st.download_button(
+            "JSONとして保存",
+            data=json.dumps(gp, ensure_ascii=False, indent=2).encode("utf-8"),
+            file_name="style_prefs_global.json",
+            mime="application/json",
+        )
+    with b2:
+        up = st.file_uploader(
+            "JSONを読み込み", type=["json"], key="style_global_uploader"
+        )
+        if up:
+            st.session_state["style_prefs_global"] = json.load(up)
+            st.success("読み込み完了。表示を更新します。")
+            st.rerun()
+    with b3:
+        if st.button("既定に戻す"):
+            st.session_state["style_prefs_global"] = {}
+            st.rerun()
 
 # ---------------- Session State ----------------
 if "data_monthly" not in st.session_state:
@@ -207,6 +338,96 @@ def format_amount(val: Optional[float], unit: str) -> str:
 def marker_step(dates, target_points=24):
     n = len(pd.unique(dates))
     return max(1, round(n / target_points))
+
+
+DEFAULT_PALETTES = {
+    "Default": None,
+    "Contrast": [
+        "#1f77b4",
+        "#d62728",
+        "#2ca02c",
+        "#ff7f0e",
+        "#9467bd",
+        "#17becf",
+        "#7f7f7f",
+        "#bcbd22",
+    ],
+    "Pastel": [
+        "#8ecae6",
+        "#ffb5a7",
+        "#c1d3fe",
+        "#bde0fe",
+        "#caffbf",
+        "#ffd6a5",
+        "#d0bdf4",
+        "#ffc8dd",
+    ],
+    "Colorblind": [
+        "#0072B2",
+        "#D55E00",
+        "#009E73",
+        "#CC79A7",
+        "#F0E442",
+        "#56B4E9",
+        "#E69F00",
+        "#000000",
+    ],
+}
+
+
+def apply_global_user_style(fig):
+    """ダーク/ライトと個人設定を最終適用。必ず st.plotly_chart の直前で呼ぶ。"""
+    prefs = st.session_state.get("style_prefs_global", {})
+    pal = prefs.get("palette")
+    if pal in DEFAULT_PALETTES and DEFAULT_PALETTES[pal]:
+        fig.update_layout(colorway=DEFAULT_PALETTES[pal])
+    legend_pos = prefs.get("legend_pos", "右")
+    legend_cfg = dict(y=1, x=1.02, yanchor="top", xanchor="left")
+    if legend_pos == "上":
+        legend_cfg = dict(orientation="h", y=1.08, x=0, yanchor="bottom")
+    if legend_pos == "下":
+        legend_cfg = dict(orientation="h", y=-0.2, x=0)
+    if legend_pos == "左":
+        legend_cfg = dict(y=1, x=-0.02, yanchor="top", xanchor="right")
+    fig.update_layout(
+        paper_bgcolor=prefs.get("paper_bgcolor", fig.layout.paper_bgcolor),
+        plot_bgcolor=prefs.get("plot_bgcolor", fig.layout.plot_bgcolor),
+        font=dict(color=prefs.get("text_color", (fig.layout.font.color if fig.layout.font else None))),
+        legend=legend_cfg,
+    )
+    show_grid = prefs.get("show_grid", True)
+    gridc = prefs.get("grid_color", None) or (
+        "rgba(255,255,255,.10)" if st.session_state["ui_theme"] == "dark" else "rgba(11,19,36,.12)"
+    )
+    linec = (
+        "rgba(255,255,255,.28)"
+        if (prefs.get("bold_axis") and st.session_state["ui_theme"] == "dark")
+        else ("rgba(11,19,36,.30)" if prefs.get("bold_axis") else None)
+    )
+    fig.update_xaxes(showgrid=show_grid, gridcolor=gridc, linecolor=linec)
+    fig.update_yaxes(showgrid=show_grid, gridcolor=gridc, linecolor=linec)
+    lw = float(prefs.get("line_width", 2.2))
+    dash_map = {"実線": None, "点線": "dot", "破線": "dash", "点破線": "dashdot"}
+    dash = dash_map.get(prefs.get("line_dash", "実線"))
+    ms = int(prefs.get("marker_size", 6))
+    symbol = prefs.get("marker_symbol", "circle")
+    edge_c = prefs.get(
+        "marker_edge_c", "#FFFFFF" if st.session_state["ui_theme"] == "dark" else "#0B1324"
+    )
+    edge_w = float(prefs.get("marker_edge_w", 1.0))
+    fig.update_traces(line=dict(width=lw, dash=dash))
+    if ms <= 0:
+        fig.update_traces(mode="lines")
+    else:
+        fig.update_traces(mode="lines+markers")
+        fig.update_traces(
+            selector=lambda t: "markers" in (t.mode or ""),
+            marker=dict(size=ms, symbol=symbol, line=dict(width=edge_w, color=edge_c)),
+        )
+    return fig
+
+# store function for other modules
+st.session_state["_apply_global_user_style"] = apply_global_user_style
 
 
 # ---- Correlation Helpers & Label Overlap Avoidance ----
@@ -465,6 +686,7 @@ elif page == "ダッシュボード":
     fig = px.line(totals, x="month", y="year_sum_disp", title="総合 年計トレンド", markers=True)
     fig.update_yaxes(title=f"年計({unit})")
     fig.update_layout(height=350, margin=dict(l=10, r=10, t=50, b=10))
+    fig = apply_global_user_style(fig)
     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
     # ランキング（年計）
@@ -514,6 +736,7 @@ elif page == "ランキング":
     st.caption(f"除外 {zero_cnt} 件 / 全 {total} 件")
 
     fig_bar = px.bar(snap.head(20), x="product_name", y=metric)
+    fig_bar = apply_global_user_style(fig_bar)
     st.plotly_chart(fig_bar, use_container_width=True, config=PLOTLY_CONFIG)
 
     if ai_on and not snap.empty:
@@ -841,6 +1064,7 @@ zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配�
         pass
 
     with st.expander("分布（オプション）", expanded=False):
+        hist_fig = apply_global_user_style(hist_fig)
         st.plotly_chart(hist_fig, use_container_width=True)
 
     # ---- Small Multiples ----
@@ -891,6 +1115,7 @@ zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配�
         last_val = g.sort_values("month")["year_sum"].iloc[-1] / UNIT_MAP[unit] if not g.empty else np.nan
         with cols[i % col_count]:
             st.metric(disp, f"{last_val:,.0f} {unit}" if not np.isnan(last_val) else "—")
+            fig_s = apply_global_user_style(fig_s)
             st.plotly_chart(
                 fig_s,
                 use_container_width=True,
@@ -1038,6 +1263,7 @@ elif page == "相関分析":
         st.caption("右上=強い正、左下=強い負、白=関係薄")
         corr = df_plot[metrics].corr(method=method)
         fig_corr = px.imshow(corr, color_continuous_scale="RdBu_r", zmin=-1, zmax=1, text_auto=True)
+        fig_corr = apply_global_user_style(fig_corr)
         st.plotly_chart(fig_corr, use_container_width=True, config=PLOTLY_CONFIG)
 
         st.subheader("ペア・エクスプローラ")
@@ -1070,7 +1296,8 @@ elif page == "相関分析":
             outliers = df_xy.loc[resid.nlargest(3).index]
             for _, row in outliers.iterrows():
                 label = row["product_name"] or row["product_code"]
-                fig_sc.add_annotation(x=row[x_col], y=row[y_col], text=label, showarrow=True, arrowhead=1)
+            fig_sc.add_annotation(x=row[x_col], y=row[y_col], text=label, showarrow=True, arrowhead=1)
+            fig_sc = apply_global_user_style(fig_sc)
             st.plotly_chart(fig_sc, use_container_width=True, config=PLOTLY_CONFIG)
             st.caption("rは -1〜+1。0は関連が薄い。CIに0を含まなければ有意。")
             st.caption("散布図の点が右上・左下に伸びれば正、右下・左上なら負。")
