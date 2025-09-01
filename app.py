@@ -10,6 +10,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+from ai_features import summarize_dataframe, generate_comment, explain_analysis
 
 # McKinsey inspired palette
 MCKINSEY_PALETTE = [
@@ -40,6 +41,20 @@ PLOTLY_CONFIG = {
     "toImageButtonOptions": {"format": "png", "filename": "年計比較"},
 }
 
+@st.cache_data(ttl=600)
+def _ai_sum_df(df: pd.DataFrame) -> str:
+    return summarize_dataframe(df)
+
+
+@st.cache_data(ttl=600)
+def _ai_explain(d: dict) -> str:
+    return explain_analysis(d)
+
+
+@st.cache_data(ttl=600)
+def _ai_comment(t: str) -> str:
+    return generate_comment(t)
+
 from services import (
     parse_uploaded_table,
     fill_missing_months,
@@ -64,41 +79,21 @@ from core.chart_card import toolbar_sku_detail, build_chart_card
 APP_TITLE = "売上年計（12カ月移動累計）ダッシュボード"
 st.set_page_config(page_title=APP_TITLE, layout="wide", initial_sidebar_state="expanded")
 
-# Global styling to evoke McKinsey's understated aesthetic
+# High contrast theme
 st.markdown(
     """
-    <style>
-    :root {
-        --color-primary: #003a70;
-        --color-accent: #8fb8de;
-        --background-color: #ffffff;
-        --card-bg: #ffffff;
-        --text-color: #1b1b1d;
-    }
-    [data-testid="stApp"] {
-        background-color: var(--background-color);
-        font-family: "Helvetica Neue", Arial, sans-serif;
-        color: var(--text-color);
-        line-height: 1.6;
-    }
-    .stSidebar {
-        background-color: var(--color-primary);
-    }
-    .stSidebar, .stSidebar a {
-        color: #ffffff !important;
-    }
-    .stButton>button {
-        background-color: var(--color-primary);
-        color: #ffffff;
-        border-radius: 4px;
-    }
-    .stAlert {
-        background-color: #f0f4f8;
-        border-left: 4px solid var(--color-accent);
-        color: var(--text-color);
-    }
-    </style>
-    """,
+<style>
+:root{ --bg:#0F172A; --panel:#111827; --text:#E6F2FF; --accent:#3BB3E6; }
+[data-testid="stAppViewContainer"]{ background:var(--bg); color:var(--text); }
+[data-testid="stSidebar"]{ background:linear-gradient(180deg,#0B3A6E 0%, #08325D 100%); color:#fff; }
+[data-testid="stSidebar"] *{ color:#fff !important; }
+.chart-card{ background:var(--panel); border:1px solid rgba(255,255,255,.12); border-radius:12px; }
+.chart-toolbar{ background:linear-gradient(180deg, rgba(59,179,230,.18), rgba(59,179,230,.10));
+  border-bottom:1px solid rgba(59,179,230,.40); }
+h1,h2,h3{ color:var(--text); font-weight:800; letter-spacing:.4px; }
+p,li,span,div{ color:var(--text); }
+</style>
+""",
     unsafe_allow_html=True,
 )
 
@@ -438,6 +433,32 @@ elif page == "ダッシュボード":
     c3.metric("前月差(Δ)", format_amount(kpi["delta"], unit))
     c4.metric("HHI(集中度)", f"{hhi:.3f}")
 
+    snap = (
+        st.session_state.data_year[st.session_state.data_year["month"] == end_m]
+        .dropna(subset=["year_sum"])
+        .copy()
+        .sort_values("year_sum", ascending=False)
+    )
+
+    ai_on = st.toggle(
+        "AIサマリー",
+        value=False,
+        help="要約・コメント・自動説明を表示（オンデマンド計算）",
+    )
+    if ai_on:
+        with st.spinner("AI要約を生成中…"):
+            kpi_text = _ai_explain(
+                {
+                    "年計総額": kpi["total_year_sum"],
+                    "年計YoY": kpi["yoy"],
+                    "前月差Δ": kpi["delta"],
+                }
+            )
+            snap_ai = snap[["year_sum", "yoy", "delta"]].head(100)
+            stat_text = _ai_sum_df(snap_ai)
+            st.info(f"**AI説明**：{kpi_text}\n\n**AI要約**：{stat_text}")
+            st.caption(_ai_comment("直近の年計トレンドと上位SKUの動向"))
+
     # 総合年計トレンド（全SKU合計）
     totals = st.session_state.data_year.groupby("month", as_index=False)["year_sum"].sum()
     totals["year_sum_disp"] = totals["year_sum"] / UNIT_MAP[unit]
@@ -447,8 +468,6 @@ elif page == "ダッシュボード":
     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
     # ランキング（年計）
-    snap = st.session_state.data_year[st.session_state.data_year["month"] == end_m].dropna(subset=["year_sum"]).copy()
-    snap = snap.sort_values("year_sum", ascending=False)
     st.subheader(f"ランキング（{end_m} 時点 年計）")
     snap_disp = snap.copy()
     snap_disp["year_sum"] = snap_disp["year_sum"] / UNIT_MAP[unit]
@@ -479,6 +498,12 @@ elif page == "ランキング":
     order = st.radio("並び順", options=["desc","asc"], horizontal=True)
     hide_zero = st.checkbox("年計ゼロを除外", value=True)
 
+    ai_on = st.toggle(
+        "AIサマリー",
+        value=False,
+        help="要約・コメント・自動説明を表示（オンデマンド計算）",
+    )
+
     snap = st.session_state.data_year[st.session_state.data_year["month"] == end_m].copy()
     total = len(snap)
     zero_cnt = int((snap["year_sum"] == 0).sum())
@@ -490,6 +515,10 @@ elif page == "ランキング":
 
     fig_bar = px.bar(snap.head(20), x="product_name", y=metric)
     st.plotly_chart(fig_bar, use_container_width=True, config=PLOTLY_CONFIG)
+
+    if ai_on and not snap.empty:
+        st.info(_ai_sum_df(snap[["year_sum", "yoy", "delta"]].head(200)))
+        st.caption(_ai_comment("上位と下位の入替やYoYの極端値に注意"))
 
     st.dataframe(
         snap[["product_code", "product_name", "year_sum", "yoy", "delta", "slope_beta"]].head(100),
@@ -736,6 +765,29 @@ elif page == "比較ビュー":
         main_codes = top_order[:max_lines]
 
     df_main = df_long[df_long["product_code"].isin(main_codes)]
+    ai_on = st.toggle(
+        "AIサマリー",
+        value=False,
+        help="要約・コメント・自動説明を表示（オンデマンド計算）",
+    )
+    if ai_on and not df_main.empty:
+        pos = len(codes_steep)
+        mtn = len(codes_mtn & set(main_codes))
+        val = len(codes_val & set(main_codes))
+        explain = _ai_explain(
+            {
+                "対象SKU数": len(main_codes),
+                "中央値(年計)": float(
+                    snapshot_disp.loc[
+                        snapshot_disp["product_code"].isin(main_codes), "year_sum_disp"
+                    ].median()
+                ),
+                "急勾配数": pos,
+                "山数": mtn,
+                "谷数": val,
+            }
+        )
+        st.info(f"**AI比較コメント**：{explain}")
 
     tb_common = dict(
         period=period,
@@ -857,6 +909,12 @@ elif page == "SKU詳細":
     df_year = st.session_state.data_year.copy()
     df_year["display_name"] = df_year["product_name"].fillna(df_year["product_code"])
 
+    ai_on = st.toggle(
+        "AIサマリー",
+        value=False,
+        help="要約・コメント・自動説明を表示（オンデマンド計算）",
+    )
+
     if mode == "単品":
         prod_label = st.selectbox("SKU選択", options=prods["product_code"] + " | " + prods["product_name"])
         code = prod_label.split(" | ")[0]
@@ -870,6 +928,17 @@ elif page == "SKU詳細":
             c1.metric("年計", f"{int(rr['year_sum']) if not pd.isna(rr['year_sum']) else '—'}")
             c2.metric("YoY", f"{rr['yoy']*100:.1f} %" if not pd.isna(rr["yoy"]) else "—")
             c3.metric("Δ", f"{int(rr['delta'])}" if not pd.isna(rr["delta"]) else "—")
+
+        if ai_on and not row.empty:
+            st.info(
+                _ai_explain(
+                    {
+                        "年計": float(rr["year_sum"]) if not pd.isna(rr["year_sum"]) else 0.0,
+                        "YoY": float(rr["yoy"]) if not pd.isna(rr["yoy"]) else 0.0,
+                        "Δ": float(rr["delta"]) if not pd.isna(rr["delta"]) else 0.0,
+                    }
+                )
+            )
 
         st.subheader("メモ / タグ")
         note = st.text_area("メモ（保存で保持）", value=st.session_state.notes.get(code, ""), height=100)
@@ -902,6 +971,8 @@ elif page == "SKU詳細":
             snap = latest_yearsum_snapshot(df_year, end_m)
             if codes:
                 snap = snap[snap["product_code"].isin(codes)]
+            if ai_on and not snap.empty:
+                st.info(_ai_sum_df(snap[["year_sum", "yoy", "delta"]]))
             st.dataframe(
                 snap[["product_code", "product_name", "year_sum", "yoy", "delta"]],
                 use_container_width=True,
@@ -937,6 +1008,12 @@ elif page == "相関分析":
     winsor_pct = st.slider("外れ値丸め(%)", 0.0, 5.0, 1.0)
     log_enable = st.checkbox("ログ変換", value=False)
 
+    ai_on = st.toggle(
+        "AIサマリー",
+        value=False,
+        help="要約・コメント・自動説明を表示（オンデマンド計算）",
+    )
+
     if metrics:
         df_plot = snapshot.copy()
         df_plot = winsorize_frame(df_plot, metrics, p=winsor_pct / 100)
@@ -950,6 +1027,12 @@ elif page == "相関分析":
         weak_cnt = int((tbl["r"].abs() < 0.2).sum())
         st.write(f"統計的に有意な相関: {sig_cnt} 組")
         st.write(f"|r|<0.2 の組み合わせ: {weak_cnt} 組")
+
+        if ai_on and not tbl.empty:
+            r_mean = float(tbl["r"].abs().mean())
+            st.info(
+                _ai_explain({"有意本数": int((tbl["sig"] == "有意(95%)").sum()), "平均|r|": r_mean})
+            )
 
         st.subheader("相関ヒートマップ")
         st.caption("右上=強い正、左下=強い負、白=関係薄")
