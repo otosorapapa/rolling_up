@@ -250,6 +250,23 @@ def format_amount(val: Optional[float], unit: str) -> str:
     return f"{val/scale:,.0f} {unit}"
 
 
+def format_int(val: float | int) -> str:
+    """Format a number with commas and no decimal part."""
+    try:
+        return f"{int(val):,}"
+    except (TypeError, ValueError):
+        return "0"
+
+
+def int_input(label: str, value: int) -> int:
+    """Text input for integer values displayed with thousands separators."""
+    text = st.text_input(label, format_int(value))
+    try:
+        return int(text.replace(",", ""))
+    except ValueError:
+        return value
+
+
 def marker_step(dates, target_points=24):
     n = len(pd.unique(dates))
     return max(1, round(n / target_points))
@@ -604,9 +621,11 @@ elif page == "比較ビュー":
     # ---- 操作バー＋グラフ密着カード ----
 
     band_params = params.get("band_params", {})
-    max_amount = float(snapshot["year_sum"].max()) if not snapshot.empty else 0.0
-    low0 = band_params.get("low_amount", float(snapshot["year_sum"].min()) if not snapshot.empty else 0.0)
-    high0 = band_params.get("high_amount", max_amount)
+    max_amount = int(snapshot["year_sum"].max()) if not snapshot.empty else 0
+    low0 = int(
+        band_params.get("low_amount", int(snapshot["year_sum"].min()) if not snapshot.empty else 0)
+    )
+    high0 = int(band_params.get("high_amount", max_amount))
 
     st.markdown(
         """
@@ -656,17 +675,20 @@ elif page == "比較ビュー":
     with c7:
         band_params = params.get("band_params", {})
         if band_mode == "金額指定" and not snapshot.empty:
-            low, high = st.slider(
+            step = max(max_amount // 100, 1)
+            opts = list(range(0, max_amount + 1, step))
+            if opts[-1] != max_amount:
+                opts.append(max_amount)
+            low, high = st.select_slider(
                 "金額レンジ",
-                min_value=0.0,
-                max_value=max_amount,
+                options=opts,
                 value=(
                     band_params.get("low_amount", low0),
                     band_params.get("high_amount", high0),
                 ),
-                step=max(max_amount / 100, 1.0),
+                format_func=format_int,
             )
-            band_params = {"low_amount": low, "high_amount": high}
+            band_params = {"low_amount": int(low), "high_amount": int(high)}
         elif band_mode == "商品指定(2)" and not snapshot.empty:
             opts = (
                 snapshot["product_code"].fillna("") + " | " + snapshot["display_name"].fillna("")
@@ -689,11 +711,16 @@ elif page == "比較ビュー":
             tlabel = st.selectbox("基準商品", opts, index=0) if opts else ""
             tcode = tlabel.split(" | ")[0] if tlabel else ""
             by = st.radio("幅指定", ["金額", "%"], horizontal=True)
-            width_default = 100000.0 if by == "金額" else 0.1
-            width = st.number_input(
-                "幅", value=float(band_params.get("width", width_default)), step=width_default / 10
-            )
-            band_params = {"target_code": tcode, "by": "amt" if by == "金額" else "pct", "width": width}
+            if by == "金額":
+                width_default = 100000
+                width = int_input("幅", int(band_params.get("width", width_default)))
+                band_params = {"target_code": tcode, "by": "amt", "width": int(width)}
+            else:
+                width_default = 0.1
+                width = st.number_input(
+                    "幅", value=float(band_params.get("width", width_default)), step=width_default / 10
+                )
+                band_params = {"target_code": tcode, "by": "pct", "width": width}
     with c8:
         quick = st.radio(
             "クイック絞り込み",
@@ -727,12 +754,10 @@ elif page == "比較ビュー":
     with c16:
         thr_type = st.radio("しきい値の種類", ["円/月", "%/月", "zスコア"], horizontal=True)
     with c17:
-        thr_val = st.number_input(
-            "しきい値",
-            value=0.0,
-            step=(10000.0 if thr_type == "円/月" else 0.01),
-            format="%.2f" if thr_type != "円/月" else "%.0f",
-        )
+        if thr_type == "円/月":
+            thr_val = int_input("しきい値", 0)
+        else:
+            thr_val = st.number_input("しきい値", value=0.0, step=0.01, format="%.2f")
     c18, c19, c20 = st.columns([1.6, 1.2, 1.8])
     with c18:
         sens = st.slider("形状抽出の感度", 0.0, 1.0, 0.5, 0.05)
@@ -1167,7 +1192,7 @@ elif page == "設定":
         s["last_n"] = st.number_input("傾き算出の対象点数", min_value=3, max_value=36, value=int(s["last_n"]), step=1)
     with c2:
         s["yoy_threshold"] = st.number_input("YoY 閾値（<=）", value=float(s["yoy_threshold"]), step=0.01, format="%.2f")
-        s["delta_threshold"] = st.number_input("Δ 閾値（<= 円）", value=float(s["delta_threshold"]), step=10000.0, format="%.0f")
+        s["delta_threshold"] = int_input("Δ 閾値（<= 円）", int(s["delta_threshold"]))
     with c3:
         s["slope_threshold"] = st.number_input("傾き 閾値（<=）", value=float(s["slope_threshold"]), step=0.1, format="%.2f")
         s["currency_unit"] = st.selectbox("通貨単位表記", options=["円","千円","百万円"], index=["円","千円","百万円"].index(s["currency_unit"]))
