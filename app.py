@@ -75,6 +75,7 @@ from services import (
     shape_flags,
 )
 from core.chart_card import toolbar_sku_detail, build_chart_card
+from core.plot_utils import apply_elegant_theme
 
 APP_TITLE = "売上年計（12カ月移動累計）ダッシュボード"
 st.set_page_config(page_title=APP_TITLE, layout="wide", initial_sidebar_state="expanded")
@@ -96,6 +97,51 @@ p,li,span,div{ color:var(--text); }
 """,
     unsafe_allow_html=True,
 )
+
+# ===== Elegant（品格）UI ON/OFF（ヘッダに設置） =====
+elegant_on = st.toggle(
+    "品格UI",
+    value=True,
+    help="上品で読みやすい配色・余白・タイポグラフィを適用",
+)
+st.session_state["elegant_on"] = elegant_on
+
+# ===== 品格UI CSS（配色/余白/フォント/境界の見直し） =====
+if elegant_on:
+    st.markdown(
+        """
+    <style>
+      :root{
+        --ink:#0B1324;            /* ライト時文字 */
+        --ink-inv:#E9F1FF;        /* ダーク時文字 */
+        --bg:#0F1117;             /* ダーク背景 */
+        --panel:#11161D;          /* カード */
+        --line:rgba(255,255,255,.14);
+        --lineL:rgba(11,19,36,.14);
+        --accent:#2E90FA;         /* 落ち着いた青 */
+      }
+      /* 本文・見出しの格調感（太さ＆字間） */
+      h1,h2,h3{ letter-spacing:.3px; font-weight:800; }
+      p,li,div,span{ font-variant-numeric: tabular-nums; }
+      /* カードの陰影は控えめ、縁はヘアライン */
+      .chart-card, .stTabs, .stDataFrame, .element-container{
+        border-radius:14px; box-shadow:0 6px 16px rgba(0,0,0,.18);
+        border:1px solid var(--line);
+      }
+      /* ツールバー：落ち着いた青のグラデ＋細線 */
+      .chart-toolbar{
+        background:linear-gradient(180deg, rgba(46,144,250,.14), rgba(46,144,250,.08));
+        border-bottom:1px solid rgba(46,144,250,.35);
+      }
+      /* ボタン/ラジオは角丸＋細めフォント */
+      .stButton>button, .stRadio label, .stCheckbox label{ border-radius:10px; font-weight:600; }
+      /* サイドバーは濃紺×白で可読性 */
+      [data-testid="stSidebar"]{ background:#0B3A6E; color:#fff; }
+      [data-testid="stSidebar"] *{ color:#fff !important; }
+    </style>
+    """,
+        unsafe_allow_html=True,
+    )
 
 # ---------------- Session State ----------------
 if "data_monthly" not in st.session_state:
@@ -465,6 +511,7 @@ elif page == "ダッシュボード":
     fig = px.line(totals, x="month", y="year_sum_disp", title="総合 年計トレンド", markers=True)
     fig.update_yaxes(title=f"年計({unit})")
     fig.update_layout(height=350, margin=dict(l=10, r=10, t=50, b=10))
+    fig = apply_elegant_theme(fig, theme=st.session_state.get("ui_theme", "dark"))
     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
     # ランキング（年計）
@@ -514,6 +561,7 @@ elif page == "ランキング":
     st.caption(f"除外 {zero_cnt} 件 / 全 {total} 件")
 
     fig_bar = px.bar(snap.head(20), x="product_name", y=metric)
+    fig_bar = apply_elegant_theme(fig_bar, theme=st.session_state.get("ui_theme", "dark"))
     st.plotly_chart(fig_bar, use_container_width=True, config=PLOTLY_CONFIG)
 
     if ai_on and not snap.empty:
@@ -679,13 +727,17 @@ elif page == "比較ビュー":
     with c16:
         thr_type = st.radio("しきい値の種類", ["円/月", "%/月", "zスコア"], horizontal=True)
     with c17:
-        default_thr = 0.03 if thr_type == "%/月" else (1.5 if thr_type == "zスコア" else 100000.0)
-        thr_val = st.number_input("しきい値", value=float(default_thr))
+        thr_val = st.number_input(
+            "しきい値",
+            value=0.0,
+            step=(10000.0 if thr_type == "円/月" else 0.01),
+            format="%.2f" if thr_type != "円/月" else "%.0f",
+        )
     c18, c19, c20 = st.columns([1.6, 1.2, 1.8])
     with c18:
         sens = st.slider("形状抽出の感度", 0.0, 1.0, 0.5, 0.05)
     with c19:
-        z_thr = st.slider("急勾配 zスコア", 0.5, 3.0, 1.5, 0.1)
+        z_thr = st.slider("急勾配 zスコア", 0.0, 3.0, 0.0, 0.1)
     with c20:
         shape_pick = st.radio("形状抽出", ["（なし）", "急勾配", "山（への字）", "谷（逆への字）"], horizontal=True)
     st.markdown('</div>', unsafe_allow_html=True)
@@ -841,6 +893,7 @@ zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配�
         pass
 
     with st.expander("分布（オプション）", expanded=False):
+        hist_fig = apply_elegant_theme(hist_fig, theme=st.session_state.get("ui_theme", "dark"))
         st.plotly_chart(hist_fig, use_container_width=True)
 
     # ---- Small Multiples ----
@@ -891,6 +944,7 @@ zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配�
         last_val = g.sort_values("month")["year_sum"].iloc[-1] / UNIT_MAP[unit] if not g.empty else np.nan
         with cols[i % col_count]:
             st.metric(disp, f"{last_val:,.0f} {unit}" if not np.isnan(last_val) else "—")
+            fig_s = apply_elegant_theme(fig_s, theme=st.session_state.get("ui_theme", "dark"))
             st.plotly_chart(
                 fig_s,
                 use_container_width=True,
@@ -1007,6 +1061,7 @@ elif page == "相関分析":
     )
     winsor_pct = st.slider("外れ値丸め(%)", 0.0, 5.0, 1.0)
     log_enable = st.checkbox("ログ変換", value=False)
+    r_thr = st.slider("相関 r 閾値（|r|≥）", 0.0, 1.0, 0.0, 0.05)
 
     ai_on = st.toggle(
         "AIサマリー",
@@ -1019,6 +1074,7 @@ elif page == "相関分析":
         df_plot = winsorize_frame(df_plot, metrics, p=winsor_pct / 100)
         df_plot = maybe_log1p(df_plot, metrics, log_enable)
         tbl = corr_table(df_plot, metrics, method=method)
+        tbl = tbl[abs(tbl["r"]) >= r_thr]
 
         st.subheader("相関の要点")
         for line in narrate_top_insights(tbl, NAME_MAP):
@@ -1038,6 +1094,7 @@ elif page == "相関分析":
         st.caption("右上=強い正、左下=強い負、白=関係薄")
         corr = df_plot[metrics].corr(method=method)
         fig_corr = px.imshow(corr, color_continuous_scale="RdBu_r", zmin=-1, zmax=1, text_auto=True)
+        fig_corr = apply_elegant_theme(fig_corr, theme=st.session_state.get("ui_theme", "dark"))
         st.plotly_chart(fig_corr, use_container_width=True, config=PLOTLY_CONFIG)
 
         st.subheader("ペア・エクスプローラ")
@@ -1071,6 +1128,7 @@ elif page == "相関分析":
             for _, row in outliers.iterrows():
                 label = row["product_name"] or row["product_code"]
                 fig_sc.add_annotation(x=row[x_col], y=row[y_col], text=label, showarrow=True, arrowhead=1)
+            fig_sc = apply_elegant_theme(fig_sc, theme=st.session_state.get("ui_theme", "dark"))
             st.plotly_chart(fig_sc, use_container_width=True, config=PLOTLY_CONFIG)
             st.caption("rは -1〜+1。0は関連が薄い。CIに0を含まなければ有意。")
             st.caption("散布図の点が右上・左下に伸びれば正、右下・左上なら負。")

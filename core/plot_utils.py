@@ -1,6 +1,69 @@
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import streamlit as st
+
+
+def apply_elegant_theme(fig: go.Figure, theme: str = "dark") -> go.Figure:
+    """Apply subdued, elegant styling to Plotly figures when enabled."""
+    if not st.session_state.get("elegant_on", True):
+        return fig
+    if theme == "dark":
+        fig.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="#0F1117",
+            plot_bgcolor="#0F1117",
+            font=dict(
+                family="Noto Sans JP, Meiryo, Arial",
+                size=12,
+                color="#E9F1FF",
+            ),
+            legend=dict(
+                bgcolor="rgba(17,22,29,.70)",
+                bordercolor="rgba(255,255,255,.14)",
+                borderwidth=1,
+            ),
+        )
+        grid = "#2A3240"
+        axisline = "rgba(255,255,255,.28)"
+    else:
+        fig.update_layout(
+            template="plotly_white",
+            paper_bgcolor="#FFFFFF",
+            plot_bgcolor="#FFFFFF",
+            font=dict(
+                family="Noto Sans JP, Meiryo, Arial",
+                size=12,
+                color="#0B1324",
+            ),
+            legend=dict(
+                bgcolor="rgba(255,255,255,.85)",
+                bordercolor="rgba(11,19,36,.14)",
+                borderwidth=1,
+            ),
+        )
+        grid = "rgba(11,19,36,.10)"
+        axisline = "rgba(11,19,36,.30)"
+    fig.update_xaxes(
+        showgrid=True,
+        gridcolor=grid,
+        linecolor=axisline,
+        ticks="outside",
+        ticklen=4,
+    )
+    fig.update_yaxes(
+        showgrid=True,
+        gridcolor=grid,
+        linecolor=axisline,
+        ticks="outside",
+        ticklen=4,
+    )
+    fig.update_traces(selector=dict(mode="lines"), line=dict(width=2.0))
+    fig.update_traces(
+        selector=lambda t: "markers" in (t.mode or ""),
+        marker=dict(size=5, line=dict(width=1, color="white")),
+    )
+    return fig
 
 
 def _plot_area_height(fig: go.Figure) -> int:

@@ -12,7 +12,7 @@ from services import (
     band_from_moving_stats,
     detect_linear_anomalies,
 )
-from core.plot_utils import add_latest_labels_no_overlap
+from core.plot_utils import add_latest_labels_no_overlap, apply_elegant_theme
 
 UNIT_SCALE = {"円": 1, "千円": 1_000, "百万円": 1_000_000}
 
@@ -153,7 +153,12 @@ def toolbar_sku_detail(multi_mode: bool):
             )
             ui["thr_type"] = thr_type
         with m:
-            thr_val = st.number_input("しきい値", value=float(ui.get("thr_val", 100000.0)), step=10000.0)
+            thr_val = st.number_input(
+                "しきい値",
+                value=float(ui.get("thr_val", 0.0)),
+                step=(10000.0 if thr_type == "円/月" else 0.01),
+                format="%.2f" if thr_type != "円/月" else "%.0f",
+            )
             ui["thr_val"] = float(thr_val)
         s1, s2 = st.columns([1.2, 1.2])
         with s1:
@@ -371,6 +376,7 @@ def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None):
             alternate_side=tb["alt_side"],
         )
 
+    fig = apply_elegant_theme(fig, theme=st.session_state.get("ui_theme", "dark"))
     st.plotly_chart(
         fig,
         use_container_width=True,
