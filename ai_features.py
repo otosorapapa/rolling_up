@@ -1,0 +1,94 @@
+"""Generative AI utilities for summarization and explanation.
+
+This module provides light‑weight wrappers around an optional
+`transformers` text2text generation pipeline.  If transformers or the
+underlying model cannot be loaded (for example in offline
+environments), the functions gracefully fall back to simple template
+based implementations so that callers always receive some text output.
+"""
+
+from __future__ import annotations
+
+from functools import lru_cache
+from typing import Dict, Optional
+
+import pandas as pd
+
+
+@lru_cache(maxsize=1)
+def _load_pipeline():  # pragma: no cover - heavy import
+    """Return a cached text2text generation pipeline if available.
+
+    The function tries to load a small Japanese/English capable model.
+    If the environment does not have the required libraries or cannot
+    download the model, ``None`` is returned so that callers can fall
+    back to deterministic logic.
+    """
+
+    try:  # noqa: WPS501 - broad except to gracefully handle missing deps
+        from transformers import pipeline
+
+        # A very small model that supports summarisation and general
+        # instruction following.  The size (~80MB) keeps CI reasonably
+        # light while still demonstrating generative behaviour.
+        return pipeline(
+            "text2text-generation",
+            model="google/flan-t5-small",
+        )
+    except Exception:  # pragma: no cover - import failure branch
+        return None
+
+
+def summarize_dataframe(df: pd.DataFrame) -> str:
+    """Summarise a numeric dataframe using a generative model.
+
+    The dataframe's descriptive statistics are converted to text and
+    fed into a text2text model.  When the model is unavailable a simple
+    textual summary based on the statistics is returned.
+    """
+
+    stats = df.describe(include="all").fillna(0).to_string()
+    pipe = _load_pipeline()
+    if pipe is not None:
+        prompt = (
+            "以下の統計量からデータの概要を日本語で2文以内に要約してください:\n" + stats
+        )
+        result = pipe(prompt, max_new_tokens=120)[0]["generated_text"].strip()
+        return result
+    # Fallback summarisation
+    lines = [line.strip() for line in stats.splitlines() if line.strip()]
+    return f"行数{len(df)}・列数{len(df.columns)}。" + " ".join(lines[:2])
+
+
+def generate_comment(topic: str) -> str:
+    """Generate a short comment about a topic.
+
+    Parameters
+    ----------
+    topic:
+        Free form text describing the subject of the comment.
+    """
+
+    pipe = _load_pipeline()
+    if pipe is not None:
+        prompt = f"次の内容について1文のコメントを日本語で書いてください: {topic}"
+        return pipe(prompt, max_new_tokens=60)[0]["generated_text"].strip()
+    return f"{topic}についてのコメント。"  # simple fallback
+
+
+def explain_analysis(metrics: Dict[str, float]) -> str:
+    """Explain analysis metrics using generative text.
+
+    Metrics are provided as a mapping of indicator name to value.  The
+    model is prompted to explain their meaning in a concise manner.  If
+    the model is unavailable a deterministic sentence is composed.
+    """
+
+    summary = ", ".join(f"{k}={v}" for k, v in metrics.items()) or "指標なし"
+    pipe = _load_pipeline()
+    if pipe is not None:
+        prompt = (
+            "次の分析結果を分かりやすく説明してください:\n" + summary
+        )
+        return pipe(prompt, max_new_tokens=120)[0]["generated_text"].strip()
+    return f"分析結果: {summary}"  # fallback

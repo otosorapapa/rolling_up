@@ -17,3 +17,5 @@ ruff
 black
 pytest
 hypothesis
+transformers>=4.36
+torch
