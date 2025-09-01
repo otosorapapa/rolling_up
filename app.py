@@ -75,6 +75,7 @@ from services import (
     shape_flags,
 )
 from core.chart_card import toolbar_sku_detail, build_chart_card
+from core.plot_utils import styled_plotly_chart
 
 APP_TITLE = "売上年計（12カ月移動累計）ダッシュボード"
 st.set_page_config(page_title=APP_TITLE, layout="wide", initial_sidebar_state="expanded")
@@ -465,7 +466,7 @@ elif page == "ダッシュボード":
     fig = px.line(totals, x="month", y="year_sum_disp", title="総合 年計トレンド", markers=True)
     fig.update_yaxes(title=f"年計({unit})")
     fig.update_layout(height=350, margin=dict(l=10, r=10, t=50, b=10))
-    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+    styled_plotly_chart(fig, key="totals_trend", use_container_width=True, config=PLOTLY_CONFIG)
 
     # ランキング（年計）
     st.subheader(f"ランキング（{end_m} 時点 年計）")
@@ -514,7 +515,7 @@ elif page == "ランキング":
     st.caption(f"除外 {zero_cnt} 件 / 全 {total} 件")
 
     fig_bar = px.bar(snap.head(20), x="product_name", y=metric)
-    st.plotly_chart(fig_bar, use_container_width=True, config=PLOTLY_CONFIG)
+    styled_plotly_chart(fig_bar, key="ranking_bar", use_container_width=True, config=PLOTLY_CONFIG)
 
     if ai_on and not snap.empty:
         st.info(_ai_sum_df(snap[["year_sum", "yoy", "delta"]].head(200)))
@@ -810,7 +811,14 @@ elif page == "比較ビュー":
     )
 
     st.markdown('<div class="chart-body">', unsafe_allow_html=True)
-    fig = build_chart_card(df_main, selected_codes=None, multi_mode=True, tb=tb_common, band_range=(low, high))
+    fig = build_chart_card(
+        df_main,
+        selected_codes=None,
+        multi_mode=True,
+        tb=tb_common,
+        band_range=(low, high),
+        key="band_overlay",
+    )
     st.markdown('</div>', unsafe_allow_html=True)
     st.markdown('</section>', unsafe_allow_html=True)
 
@@ -841,7 +849,7 @@ zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配�
         pass
 
     with st.expander("分布（オプション）", expanded=False):
-        st.plotly_chart(hist_fig, use_container_width=True)
+        styled_plotly_chart(hist_fig, key="band_hist", use_container_width=True)
 
     # ---- Small Multiples ----
     df_nodes = df_main.iloc[0:0].copy()
@@ -891,8 +899,9 @@ zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配�
         last_val = g.sort_values("month")["year_sum"].iloc[-1] / UNIT_MAP[unit] if not g.empty else np.nan
         with cols[i % col_count]:
             st.metric(disp, f"{last_val:,.0f} {unit}" if not np.isnan(last_val) else "—")
-            st.plotly_chart(
+            styled_plotly_chart(
                 fig_s,
+                key=f"small_{code}",
                 use_container_width=True,
                 height=150,
                 config=PLOTLY_CONFIG,
@@ -918,7 +927,13 @@ elif page == "SKU詳細":
     if mode == "単品":
         prod_label = st.selectbox("SKU選択", options=prods["product_code"] + " | " + prods["product_name"])
         code = prod_label.split(" | ")[0]
-        build_chart_card(df_year, selected_codes=[code], multi_mode=False, tb=tb)
+        build_chart_card(
+            df_year,
+            selected_codes=[code],
+            multi_mode=False,
+            tb=tb,
+            key=f"sku_{code}",
+        )
 
         g_y = df_year[df_year["product_code"] == code].sort_values("month")
         row = g_y[g_y["month"] == end_m]
@@ -967,7 +982,13 @@ elif page == "SKU詳細":
         sel = st.multiselect("SKU選択（最大12件）", options=opts, max_selections=12)
         codes = [s.split(" | ")[0] for s in sel]
         if codes or (tb.get("slope_conf") and tb["slope_conf"].get("quick") != "なし"):
-            build_chart_card(df_year, selected_codes=codes, multi_mode=True, tb=tb)
+            build_chart_card(
+                df_year,
+                selected_codes=codes,
+                multi_mode=True,
+                tb=tb,
+                key="sku_multi",
+            )
             snap = latest_yearsum_snapshot(df_year, end_m)
             if codes:
                 snap = snap[snap["product_code"].isin(codes)]
@@ -1038,7 +1059,7 @@ elif page == "相関分析":
         st.caption("右上=強い正、左下=強い負、白=関係薄")
         corr = df_plot[metrics].corr(method=method)
         fig_corr = px.imshow(corr, color_continuous_scale="RdBu_r", zmin=-1, zmax=1, text_auto=True)
-        st.plotly_chart(fig_corr, use_container_width=True, config=PLOTLY_CONFIG)
+        styled_plotly_chart(fig_corr, key="corr_heatmap", use_container_width=True, config=PLOTLY_CONFIG)
 
         st.subheader("ペア・エクスプローラ")
         c1, c2 = st.columns(2)
@@ -1071,7 +1092,7 @@ elif page == "相関分析":
             for _, row in outliers.iterrows():
                 label = row["product_name"] or row["product_code"]
                 fig_sc.add_annotation(x=row[x_col], y=row[y_col], text=label, showarrow=True, arrowhead=1)
-            st.plotly_chart(fig_sc, use_container_width=True, config=PLOTLY_CONFIG)
+            styled_plotly_chart(fig_sc, key="corr_scatter", use_container_width=True, config=PLOTLY_CONFIG)
             st.caption("rは -1〜+1。0は関連が薄い。CIに0を含まなければ有意。")
             st.caption("散布図の点が右上・左下に伸びれば正、右下・左上なら負。")
     else:
