@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+from core.style_prefs import get_style_prefs, apply_user_style
 
 from services import (
     slopes_snapshot,
@@ -370,7 +371,8 @@ def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None):
             min_gap_px=tb["gap_px"],
             alternate_side=tb["alt_side"],
         )
-
+    prefs = get_style_prefs(st.session_state.get("current_page", "default"))
+    fig = apply_user_style(fig, prefs)
     st.plotly_chart(
         fig,
         use_container_width=True,
