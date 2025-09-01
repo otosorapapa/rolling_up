@@ -578,7 +578,7 @@ elif page == "ダッシュボード":
         totals, x="month", y="year_sum_disp", title="総合 年計トレンド", markers=True
     )
     fig.update_yaxes(title=f"年計({unit})", tickformat="~,d")
-    fig.update_layout(height=350, margin=dict(l=10, r=10, t=50, b=10))
+    fig.update_layout(height=525, margin=dict(l=10, r=10, t=50, b=10))
     fig = apply_elegant_theme(fig, theme=st.session_state.get("ui_theme", "dark"))
     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
@@ -1126,7 +1126,7 @@ zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配�
             st.plotly_chart(
                 fig_s,
                 use_container_width=True,
-                height=150,
+                height=225,
                 config=PLOTLY_CONFIG,
             )
 
