@@ -122,8 +122,6 @@ if "compare_params" not in st.session_state:
     st.session_state.compare_params = {}
 if "compare_results" not in st.session_state:
     st.session_state.compare_results = None
-if "style_prefs_page" not in st.session_state:
-    st.session_state.style_prefs_page = {}
 
 # track user interactions and global filters
 if "click_log" not in st.session_state:
@@ -133,31 +131,6 @@ if "filters" not in st.session_state:
 
 # currency unit scaling factors
 UNIT_MAP = {"円": 1, "千円": 1_000, "百万円": 1_000_000}
-
-DEFAULT_STYLE = {
-    "plot_bg": "#ffffff",
-    "paper_bg": "#ffffff",
-    "text_color": "#000000",
-    "grid_color": "#dddddd",
-    "palette": "Default",
-    "line_width": 1.5,
-    "line_style": "実線",
-    "node_size": 6,
-    "node_shape": "circle",
-    "node_edge_color": "#ffffff",
-    "node_edge_width": 1.0,
-    "legend_pos": "右",
-    "show_grid": True,
-    "axis_bold": False,
-    "series_colors": {},
-}
-
-PALETTES = {
-    "Default": px.colors.qualitative.Safe,
-    "Pastel": px.colors.qualitative.Pastel,
-    "Contrast": px.colors.qualitative.Bold,
-    "Colorblind": px.colors.qualitative.Colorblind,
-}
 
 
 def log_click(name: str):
@@ -708,59 +681,13 @@ elif page == "比較ビュー":
     with c17:
         default_thr = 0.03 if thr_type == "%/月" else (1.5 if thr_type == "zスコア" else 100000.0)
         thr_val = st.number_input("しきい値", value=float(default_thr))
-    c18, c19, c20, c21 = st.columns([1.6, 1.2, 1.8, 1.8])
+    c18, c19, c20 = st.columns([1.6, 1.2, 1.8])
     with c18:
         sens = st.slider("形状抽出の感度", 0.0, 1.0, 0.5, 0.05)
     with c19:
         z_thr = st.slider("急勾配 zスコア", 0.5, 3.0, 1.5, 0.1)
     with c20:
         shape_pick = st.radio("形状抽出", ["（なし）", "急勾配", "山（への字）", "谷（逆への字）"], horizontal=True)
-    with c21:
-        style = st.session_state.style_prefs_page.setdefault("compare", DEFAULT_STYLE.copy())
-        with st.expander("🎨 表示カスタマイズ", expanded=False):
-            style["plot_bg"] = st.color_picker("プロット背景", style.get("plot_bg", "#ffffff"))
-            style["paper_bg"] = st.color_picker("紙背景", style.get("paper_bg", "#ffffff"))
-            style["text_color"] = st.color_picker("文字色", style.get("text_color", "#000000"))
-            style["grid_color"] = st.color_picker("グリッド色", style.get("grid_color", "#dddddd"))
-            style["palette"] = st.selectbox(
-                "カラーパレット",
-                list(PALETTES.keys()),
-                index=list(PALETTES.keys()).index(style.get("palette", "Default")),
-            )
-            style["line_width"] = st.slider("線の太さ", 0.8, 4.0, style.get("line_width", 1.5), 0.1)
-            style["line_style"] = st.selectbox(
-                "線スタイル",
-                ["実線", "点線", "破線", "点破線"],
-                index=["実線", "点線", "破線", "点破線"].index(style.get("line_style", "実線")),
-            )
-            style["node_size"] = st.slider("ノードサイズ", 0, 12, style.get("node_size", 6))
-            style["node_shape"] = st.selectbox(
-                "ノード形", ["circle", "square", "diamond", "cross", "triangle-up"],
-                index=["circle", "square", "diamond", "cross", "triangle-up"].index(style.get("node_shape", "circle")),
-            )
-            style["node_edge_color"] = st.color_picker("ノード縁色", style.get("node_edge_color", "#ffffff"))
-            style["node_edge_width"] = st.slider("ノード縁太さ", 0.0, 5.0, style.get("node_edge_width", 1.0), 0.1)
-            style["legend_pos"] = st.selectbox(
-                "凡例位置", ["右", "上", "下", "左"],
-                index=["右", "上", "下", "左"].index(style.get("legend_pos", "右")),
-            )
-            style["show_grid"] = st.checkbox("グリッド表示", value=style.get("show_grid", True))
-            style["axis_bold"] = st.checkbox("軸ラインを濃く", value=style.get("axis_bold", False))
-            labels = st.session_state.get("last_compare_labels", [])
-            if labels:
-                st.write("系列色")
-            for lbl in labels:
-                key_enable = f"col_en_{lbl}"
-                key_color = f"col_{lbl}"
-                use_custom = st.checkbox(lbl, value=(lbl in style.get("series_colors", {})), key=key_enable)
-                if use_custom:
-                    col = st.color_picker("色", value=style.get("series_colors", {}).get(lbl, "#000000"), key=key_color)
-                    style.setdefault("series_colors", {})[lbl] = col
-                else:
-                    style.get("series_colors", {}).pop(lbl, None)
-            if st.button("既定に戻す"):
-                st.session_state.style_prefs_page["compare"] = DEFAULT_STYLE.copy()
-                st.experimental_rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
     params = {
@@ -883,16 +810,7 @@ elif page == "比較ビュー":
     )
 
     st.markdown('<div class="chart-body">', unsafe_allow_html=True)
-    style = st.session_state.style_prefs_page.get("compare", DEFAULT_STYLE.copy())
-    fig = build_chart_card(
-        df_main,
-        selected_codes=None,
-        multi_mode=True,
-        tb=tb_common,
-        band_range=(low, high),
-        style=style,
-    )
-    st.session_state["last_compare_labels"] = sorted(df_main["display_name"].unique())
+    fig = build_chart_card(df_main, selected_codes=None, multi_mode=True, tb=tb_common, band_range=(low, high))
     st.markdown('</div>', unsafe_allow_html=True)
     st.markdown('</section>', unsafe_allow_html=True)
 
@@ -931,8 +849,6 @@ zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配�
     SZ = 6
     dtick = "M1"
     drag = {"ズーム": "zoom", "パン": "pan", "選択": "select"}[op_mode]
-    style = st.session_state.style_prefs_page.get("compare", DEFAULT_STYLE.copy())
-    palette_base = PALETTES.get(style.get("palette", "Default"), px.colors.qualitative.Safe)
 
     st.subheader("スモールマルチプル")
     share_y = st.checkbox("Y軸共有", value=False)
@@ -948,57 +864,24 @@ zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配�
     for i, code in enumerate(page_codes):
         g = df_long[df_long["product_code"] == code]
         disp = g["display_name"].iloc[0] if not g.empty else code
-        palette = fig.layout.colorway or palette_base
-        base_color = style.get("series_colors", {}).get(disp, palette[i % len(palette)])
+        palette = fig.layout.colorway or px.colors.qualitative.Safe
         fig_s = px.line(
             g,
             x="month",
             y="year_sum",
-            color_discrete_sequence=[base_color],
+            color_discrete_sequence=[palette[i % len(palette)]],
             custom_data=["display_name"],
         )
-        dash_map = {"実線": "solid", "点線": "dot", "破線": "dash", "点破線": "dashdot"}
-        node_sym_map = {
-            "circle": "circle",
-            "square": "square",
-            "diamond": "diamond",
-            "cross": "cross",
-            "triangle-up": "triangle-up",
-        }
-        mode_val = "lines" if style.get("node_size", 6) <= 0 else "lines+markers"
         fig_s.update_traces(
-            mode=mode_val,
-            line=dict(width=style.get("line_width", 1.5), dash=dash_map.get(style.get("line_style", "実線"))),
-            marker=dict(
-                size=style.get("node_size", 6),
-                symbol=node_sym_map.get(style.get("node_shape", "circle")),
-                line=dict(color=style.get("node_edge_color", "#ffffff"), width=style.get("node_edge_width", 1.0)),
-            ),
+            mode="lines",
+            line=dict(width=1.5),
             opacity=0.8,
             showlegend=False,
             hovertemplate=f"<b>%{{customdata[0]}}</b><br>月：%{{x|%Y-%m}}<br>年計：%{{y:,.0f}} {unit}<extra></extra>",
         )
         fig_s.update_xaxes(tickformat="%Y-%m", dtick=dtick, title_text="月（YYYY-MM）")
-        fig_s.update_yaxes(
-            tickformat="~,d",
-            range=[0, ymax] if ymax else None,
-            title_text=f"売上 年計（{unit}）",
-            gridcolor=style.get("grid_color", "#dddddd"),
-            showgrid=style.get("show_grid", True),
-            showline=style.get("axis_bold", False),
-            linecolor=style.get("text_color", "#000000"),
-        )
-        fig_s.update_xaxes(
-            gridcolor=style.get("grid_color", "#dddddd"),
-            showgrid=style.get("show_grid", True),
-            showline=style.get("axis_bold", False),
-            linecolor=style.get("text_color", "#000000"),
-        )
-        fig_s.update_layout(
-            font=dict(family="Noto Sans JP, Meiryo, Arial", size=12, color=style.get("text_color", "#000000")),
-            plot_bgcolor=style.get("plot_bg", "#ffffff"),
-            paper_bgcolor=style.get("paper_bg", "#ffffff"),
-        )
+        fig_s.update_yaxes(tickformat="~,d", range=[0, ymax] if ymax else None, title_text=f"売上 年計（{unit}）")
+        fig_s.update_layout(font=dict(family="Noto Sans JP, Meiryo, Arial", size=12))
         fig_s.update_layout(hoverlabel=dict(bgcolor="rgba(30,30,30,0.92)", font=dict(color="#fff", size=12)))
         fig_s.update_layout(dragmode=drag)
         if hover_mode == "個別":
