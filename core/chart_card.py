@@ -493,6 +493,7 @@ def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None):
     st.plotly_chart(
         fig,
         use_container_width=True,
+        height=600,
         config={"displaylogo": False, "scrollZoom": True, "doubleClick": "reset"},
     )
     return fig
