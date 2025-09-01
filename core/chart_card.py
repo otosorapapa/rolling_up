@@ -15,12 +15,6 @@ from services import (
 from core.plot_utils import add_latest_labels_no_overlap
 
 UNIT_SCALE = {"円": 1, "千円": 1_000, "百万円": 1_000_000}
-PALETTES = {
-    "Default": px.colors.qualitative.Safe,
-    "Pastel": px.colors.qualitative.Pastel,
-    "Contrast": px.colors.qualitative.Bold,
-    "Colorblind": px.colors.qualitative.Colorblind,
-}
 
 
 def marker_step(dates, target_points=24):
@@ -225,7 +219,7 @@ def toolbar_sku_detail(multi_mode: bool):
     )
 
 
-def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None, style=None):
+def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None):
     months = {"12ヶ月": 12, "24ヶ月": 24, "36ヶ月": 36}[tb["period"]]
     dfp = df_long.sort_values("month").groupby("product_code").tail(months)
     if selected_codes:
@@ -271,44 +265,10 @@ def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None, s
         else:
             dfp = dfp[dfp["product_code"].isin(codes_by_slope)]
 
-    palette = None
-    color_map = None
-    if style:
-        palette = PALETTES.get(style.get("palette", "Default"), px.colors.qualitative.Safe)
-        color_map = style.get("series_colors")
-    fig = px.line(
-        dfp,
-        x="month",
-        y="year_sum_disp",
-        color="display_name",
-        custom_data=["display_name"],
-        color_discrete_sequence=palette,
-        color_discrete_map=color_map,
-    )
+    fig = px.line(dfp, x="month", y="year_sum_disp", color="display_name", custom_data=["display_name"])
     fig.update_yaxes(title_text=f"売上 年計（{tb['unit']}）", tickformat="~,d")
-    dash_map = {"実線": "solid", "点線": "dot", "破線": "dash", "点破線": "dashdot"}
-    node_sym_map = {
-        "circle": "circle",
-        "square": "square",
-        "diamond": "diamond",
-        "cross": "cross",
-        "triangle-up": "triangle-up",
-    }
-    mode_val = "lines+markers"
-    marker_conf = None
-    if style:
-        if style.get("node_size", 6) <= 0:
-            mode_val = "lines"
-        marker_conf = dict(
-            size=style.get("node_size", 6),
-            symbol=node_sym_map.get(style.get("node_shape", "circle")),
-            line=dict(color=style.get("node_edge_color", "#ffffff"), width=style.get("node_edge_width", 1.0)),
-        )
     fig.update_traces(
-        mode=mode_val,
-        line=dict(width=style.get("line_width", 1.5) if style else 1.5,
-                  dash=dash_map.get(style.get("line_style", "実線")) if style else None),
-        marker=marker_conf,
+        mode="lines+markers",
         hovertemplate="<b>%{customdata[0]}</b><br>月：%{x|%Y-%m}<br>年計：%{y:,.0f} {tb['unit']}<extra></extra>",
     )
     if band_range:
@@ -319,31 +279,6 @@ def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None, s
         dragmode={"パン": "pan", "ズーム": "zoom", "選択": "select"}[tb["op_mode"]],
         hovermode="closest" if tb["hover_mode"] == "個別" else "x unified",
     )
-    if style:
-        legend_cfg = {
-            "右": dict(x=1.02, y=1, xanchor="left", yanchor="top"),
-            "左": dict(x=-0.02, y=1, xanchor="right", yanchor="top"),
-            "上": dict(orientation="h", x=0, y=1.15, xanchor="left", yanchor="bottom"),
-            "下": dict(orientation="h", x=0, y=-0.15, xanchor="left", yanchor="top"),
-        }.get(style.get("legend_pos", "右"), {})
-        fig.update_layout(
-            plot_bgcolor=style.get("plot_bg", "#ffffff"),
-            paper_bgcolor=style.get("paper_bg", "#ffffff"),
-            font=dict(color=style.get("text_color", "#000000")),
-            legend=legend_cfg,
-        )
-        fig.update_xaxes(
-            gridcolor=style.get("grid_color", "#dddddd"),
-            showgrid=style.get("show_grid", True),
-            showline=style.get("axis_bold", False),
-            linecolor=style.get("text_color", "#000000"),
-        )
-        fig.update_yaxes(
-            gridcolor=style.get("grid_color", "#dddddd"),
-            showgrid=style.get("show_grid", True),
-            showline=style.get("axis_bold", False),
-            linecolor=style.get("text_color", "#000000"),
-        )
 
     if tb.get("forecast_method") and tb["forecast_method"] != "なし":
         method = tb["forecast_method"]
@@ -412,13 +347,6 @@ def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None, s
         df_nodes = dfp.iloc[0:0].copy()
 
     for name, d in df_nodes.groupby("display_name"):
-        if style and style.get("node_size", 6) <= 0:
-            continue
-        marker_color = None
-        for tr in fig.data:
-            if tr.name == name:
-                marker_color = tr.line.color
-                break
         fig.add_scatter(
             x=d["month"],
             y=d["year_sum_disp"],
@@ -426,16 +354,7 @@ def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None, s
             name=name,
             legendgroup=name,
             showlegend=False,
-            marker=dict(
-                size=style.get("node_size", 6) if style else 6,
-                symbol=node_sym_map.get(style.get("node_shape", "circle")) if style else "circle",
-                line=dict(
-                    color=style.get("node_edge_color", halo) if style else halo,
-                    width=style.get("node_edge_width", 2) if style else 2,
-                ),
-                opacity=0.95,
-                color=marker_color,
-            ),
+            marker=dict(size=6, symbol="circle", line=dict(color=halo, width=2), opacity=0.95),
             customdata=np.stack([d["display_name"]], axis=-1),
             hovertemplate="<b>%{customdata[0]}</b><br>月：%{x|%Y-%m}<br>年計：%{y:,.0f} {tb['unit']}<extra></extra>",
         )
