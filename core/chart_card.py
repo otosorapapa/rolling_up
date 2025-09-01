@@ -12,7 +12,7 @@ from services import (
     band_from_moving_stats,
     detect_linear_anomalies,
 )
-from core.plot_utils import add_latest_labels_no_overlap, styled_plotly_chart
+from core.plot_utils import add_latest_labels_no_overlap
 
 UNIT_SCALE = {"円": 1, "千円": 1_000, "百万円": 1_000_000}
 
@@ -219,7 +219,7 @@ def toolbar_sku_detail(multi_mode: bool):
     )
 
 
-def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None, key="chart"):
+def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None):
     months = {"12ヶ月": 12, "24ヶ月": 24, "36ヶ月": 36}[tb["period"]]
     dfp = df_long.sort_values("month").groupby("product_code").tail(months)
     if selected_codes:
@@ -371,9 +371,8 @@ def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None, k
             alternate_side=tb["alt_side"],
         )
 
-    styled_plotly_chart(
+    st.plotly_chart(
         fig,
-        key=key,
         use_container_width=True,
         config={"displaylogo": False, "scrollZoom": True, "doubleClick": "reset"},
     )
