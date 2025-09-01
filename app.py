@@ -11,7 +11,6 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from ai_features import summarize_dataframe, generate_comment, explain_analysis
-from core.style_prefs import DEFAULT_PALETTES, get_style_prefs, apply_user_style
 
 # McKinsey inspired palette
 MCKINSEY_PALETTE = [
@@ -119,10 +118,6 @@ if "tags" not in st.session_state:
     st.session_state.tags = {}  # product_code -> List[str]
 if "saved_views" not in st.session_state:
     st.session_state.saved_views = {}  # name -> dict
-if "style_prefs" not in st.session_state:
-    st.session_state.style_prefs = {}
-if "style_prefs_page" not in st.session_state:
-    st.session_state.style_prefs_page = {}
 if "compare_params" not in st.session_state:
     st.session_state.compare_params = {}
 if "compare_results" not in st.session_state:
@@ -259,93 +254,6 @@ def winsorize_frame(df, cols, p: float = 0.01):
     return out
 
 
-def style_customizer(labels: List[str], page_key: str) -> None:
-    """Display style customization UI and persist preferences."""
-    with st.expander("🎨 表示カスタマイズ", expanded=False):
-        scope = st.radio("適用対象", ["すべてのページ", "このページのみ"], horizontal=True)
-        if scope == "すべてのページ":
-            prefs = st.session_state.setdefault("style_prefs", {})
-        else:
-            st.session_state.setdefault("style_prefs_page", {})
-            prefs = st.session_state["style_prefs_page"].setdefault(page_key, {})
-
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            plot_bg = st.color_picker("プロット背景", value=prefs.get("plot_bgcolor", "#0F172A"))
-            paper_bg = st.color_picker("紙背景", value=prefs.get("paper_bgcolor", "#0F172A"))
-            text_c = st.color_picker("文字色", value=prefs.get("text_color", "#E6F2FF"))
-        with c2:
-            grid_c = st.color_picker("グリッド色", value=prefs.get("grid_color", "rgba(255,255,255,.08)"))
-            palette = st.selectbox("カラーパレット", list(DEFAULT_PALETTES.keys()), index=list(DEFAULT_PALETTES.keys()).index(prefs.get("palette", "Default")))
-            legend_pos = st.selectbox("凡例位置", ["右", "上", "下", "左"], index=["右", "上", "下", "左"].index(prefs.get("legend_pos", "右")))
-        with c3:
-            line_w = st.slider("線の太さ", 0.8, 4.0, float(prefs.get("line_width", 2.2)))
-            line_dash = st.selectbox("線のスタイル", ["実線", "点線", "破線", "点破線"], index=["実線", "点線", "破線", "点破線"].index(prefs.get("line_dash", "実線")))
-            marker_size = st.slider("ノードサイズ", 0, 12, int(prefs.get("marker_size", 6)))
-            marker_symbol = st.selectbox("ノード形状", ["circle", "square", "diamond", "cross", "triangle-up"], index=["circle", "square", "diamond", "cross", "triangle-up"].index(prefs.get("marker_symbol", "circle")))
-            marker_edge_c = st.color_picker("ノード縁色", value=prefs.get("marker_edge_c", "#FFFFFF"))
-            marker_edge_w = st.slider("ノード縁太さ", 0.0, 3.0, float(prefs.get("marker_edge_w", 1.0)))
-
-        show_grid = st.checkbox("グリッド表示", value=prefs.get("show_grid", True))
-        bold_axis = st.checkbox("目盛・軸ラインを濃く", value=prefs.get("bold_axis", False))
-        band_alpha = st.slider("予測帯の透明度", 0.0, 0.6, float(prefs.get("band_alpha", 0.18)), 0.02)
-
-        with st.expander("系列カラー手動指定（任意）", expanded=False):
-            for name in sorted(labels)[:100]:
-                prefs.setdefault("series_colors", {})
-                prefs["series_colors"][name] = st.color_picker(name, value=prefs["series_colors"].get(name, ""))
-
-        prefs.update(
-            dict(
-                plot_bgcolor=plot_bg,
-                paper_bgcolor=paper_bg,
-                text_color=text_c,
-                grid_color=grid_c,
-                palette=palette,
-                legend_pos=legend_pos,
-                line_width=line_w,
-                line_dash=line_dash,
-                marker_size=marker_size,
-                marker_symbol=marker_symbol,
-                marker_edge_c=marker_edge_c,
-                marker_edge_w=marker_edge_w,
-                show_grid=show_grid,
-                bold_axis=bold_axis,
-                band_alpha=band_alpha,
-            )
-        )
-
-        if scope == "すべてのページ":
-            st.session_state["style_prefs"] = prefs
-        else:
-            st.session_state["style_prefs_page"][page_key] = prefs
-
-        colA, colB, colC = st.columns([1, 1, 1])
-        with colA:
-            st.download_button(
-                "JSONとして保存",
-                data=json.dumps(prefs, ensure_ascii=False, indent=2).encode("utf-8"),
-                file_name="style_prefs.json",
-                mime="application/json",
-            )
-        with colB:
-            up = st.file_uploader("JSONを読み込み", type=["json"])
-            if up is not None:
-                loaded = json.load(up)
-                if scope == "すべてのページ":
-                    st.session_state["style_prefs"] = loaded
-                else:
-                    st.session_state["style_prefs_page"][page_key] = loaded
-                st.success("読み込み完了。表示を更新しました。")
-        with colC:
-            if st.button("既定に戻す"):
-                if scope == "すべてのページ":
-                    st.session_state.pop("style_prefs", None)
-                else:
-                    st.session_state.get("style_prefs_page", {}).pop(page_key, None)
-                st.experimental_rerun()
-
-
 def maybe_log1p(df, cols, enable: bool):
     if not enable:
         return df
@@ -415,19 +323,6 @@ page = st.sidebar.radio(
     ],
 )
 
-page_key_map = {
-    "ダッシュボード": "dashboard",
-    "ランキング": "ranking",
-    "比較ビュー": "compare",
-    "SKU詳細": "sku_detail",
-    "相関分析": "corr",
-    "データ取込": "upload",
-    "アラート": "alerts",
-    "設定": "settings",
-    "保存ビュー": "saved",
-}
-st.session_state["current_page"] = page_key_map.get(page, "default")
-
 # ---------------- Pages ----------------
 
 # 1) データ取込
@@ -496,10 +391,6 @@ if page == "データ取込":
 elif page == "ダッシュボード":
     require_data()
     st.header("ダッシュボード")
-    labels_all = (
-        st.session_state.data_year["product_name"].fillna(st.session_state.data_year["product_code"]).unique().tolist()
-    )
-    style_customizer(labels_all, st.session_state.get("current_page", "dashboard"))
 
     # Command bar (期間/単位)
     with st.container():
@@ -574,8 +465,6 @@ elif page == "ダッシュボード":
     fig = px.line(totals, x="month", y="year_sum_disp", title="総合 年計トレンド", markers=True)
     fig.update_yaxes(title=f"年計({unit})")
     fig.update_layout(height=350, margin=dict(l=10, r=10, t=50, b=10))
-    prefs = get_style_prefs(st.session_state.get("current_page", "default"))
-    fig = apply_user_style(fig, prefs)
     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
     # ランキング（年計）
@@ -604,10 +493,6 @@ elif page == "ダッシュボード":
 elif page == "ランキング":
     require_data()
     st.header("ランキング / ワースト")
-    labels_all = (
-        st.session_state.data_year["product_name"].fillna(st.session_state.data_year["product_code"]).unique().tolist()
-    )
-    style_customizer(labels_all, st.session_state.get("current_page", "ranking"))
     end_m = end_month_selector(st.session_state.data_year, key="end_month_rank")
     metric = st.selectbox("指標", options=["year_sum","yoy","delta","slope_beta"], index=0)
     order = st.radio("並び順", options=["desc","asc"], horizontal=True)
@@ -629,8 +514,6 @@ elif page == "ランキング":
     st.caption(f"除外 {zero_cnt} 件 / 全 {total} 件")
 
     fig_bar = px.bar(snap.head(20), x="product_name", y=metric)
-    prefs = get_style_prefs(st.session_state.get("current_page", "default"))
-    fig_bar = apply_user_style(fig_bar, prefs)
     st.plotly_chart(fig_bar, use_container_width=True, config=PLOTLY_CONFIG)
 
     if ai_on and not snap.empty:
@@ -660,10 +543,6 @@ elif page == "ランキング":
 elif page == "比較ビュー":
     require_data()
     st.header("マルチ商品比較")
-    labels_all = (
-        st.session_state.data_year["product_name"].fillna(st.session_state.data_year["product_code"]).unique().tolist()
-    )
-    style_customizer(labels_all, st.session_state.get("current_page", "compare"))
     params = st.session_state.compare_params
     year_df = st.session_state.data_year
     end_m = end_month_selector(year_df, key="compare_end_month")
@@ -962,8 +841,6 @@ zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配�
         pass
 
     with st.expander("分布（オプション）", expanded=False):
-        prefs = get_style_prefs(st.session_state.get("current_page", "default"))
-        hist_fig = apply_user_style(hist_fig, prefs)
         st.plotly_chart(hist_fig, use_container_width=True)
 
     # ---- Small Multiples ----
@@ -984,7 +861,6 @@ zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配�
     col_count = 4
     cols = st.columns(col_count)
     ymax = df_long[df_long["product_code"].isin(main_codes)]["year_sum"].max() / UNIT_MAP[unit] if share_y else None
-    prefs = get_style_prefs(st.session_state.get("current_page", "default"))
     for i, code in enumerate(page_codes):
         g = df_long[df_long["product_code"] == code]
         disp = g["display_name"].iloc[0] if not g.empty else code
@@ -1013,7 +889,6 @@ zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配�
         else:
             fig_s.update_layout(hovermode="x unified", hoverlabel=dict(align="left"))
         last_val = g.sort_values("month")["year_sum"].iloc[-1] / UNIT_MAP[unit] if not g.empty else np.nan
-        fig_s = apply_user_style(fig_s, prefs)
         with cols[i % col_count]:
             st.metric(disp, f"{last_val:,.0f} {unit}" if not np.isnan(last_val) else "—")
             st.plotly_chart(
@@ -1027,10 +902,6 @@ zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配�
 elif page == "SKU詳細":
     require_data()
     st.header("SKU 詳細")
-    labels_all = (
-        st.session_state.data_year["product_name"].fillna(st.session_state.data_year["product_code"]).unique().tolist()
-    )
-    style_customizer(labels_all, st.session_state.get("current_page", "sku_detail"))
     end_m = end_month_selector(st.session_state.data_year, key="end_month_detail")
     prods = st.session_state.data_year[["product_code", "product_name"]].drop_duplicates().sort_values("product_code")
     mode = st.radio("表示モード", ["単品", "複数比較"], horizontal=True)
@@ -1119,10 +990,6 @@ elif page == "SKU詳細":
 elif page == "相関分析":
     require_data()
     st.header("相関分析")
-    labels_all = (
-        st.session_state.data_year["product_name"].fillna(st.session_state.data_year["product_code"]).unique().tolist()
-    )
-    style_customizer(labels_all, st.session_state.get("current_page", "corr"))
     end_m = end_month_selector(st.session_state.data_year, key="corr_end_month")
     snapshot = latest_yearsum_snapshot(st.session_state.data_year, end_m)
 
@@ -1171,8 +1038,6 @@ elif page == "相関分析":
         st.caption("右上=強い正、左下=強い負、白=関係薄")
         corr = df_plot[metrics].corr(method=method)
         fig_corr = px.imshow(corr, color_continuous_scale="RdBu_r", zmin=-1, zmax=1, text_auto=True)
-        prefs = get_style_prefs(st.session_state.get("current_page", "default"))
-        fig_corr = apply_user_style(fig_corr, prefs)
         st.plotly_chart(fig_corr, use_container_width=True, config=PLOTLY_CONFIG)
 
         st.subheader("ペア・エクスプローラ")
@@ -1206,8 +1071,6 @@ elif page == "相関分析":
             for _, row in outliers.iterrows():
                 label = row["product_name"] or row["product_code"]
                 fig_sc.add_annotation(x=row[x_col], y=row[y_col], text=label, showarrow=True, arrowhead=1)
-            prefs = get_style_prefs(st.session_state.get("current_page", "default"))
-            fig_sc = apply_user_style(fig_sc, prefs)
             st.plotly_chart(fig_sc, use_container_width=True, config=PLOTLY_CONFIG)
             st.caption("rは -1〜+1。0は関連が薄い。CIに0を含まなければ有意。")
             st.caption("散布図の点が右上・左下に伸びれば正、右下・左上なら負。")
