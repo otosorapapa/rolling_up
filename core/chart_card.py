@@ -15,6 +15,7 @@ from services import (
 from core.plot_utils import add_latest_labels_no_overlap, apply_elegant_theme
 
 UNIT_SCALE = {"円": 1, "千円": 1_000, "百万円": 1_000_000}
+MAX_DISPLAY_PRODUCTS = 30
 
 
 def format_int(val: float | int) -> str:
@@ -35,6 +36,22 @@ def int_input(label: str, value: int) -> int:
 def marker_step(dates, target_points=24):
     n = len(pd.unique(dates))
     return max(1, round(n / target_points))
+
+
+def limit_products(
+    dfp: pd.DataFrame, max_products: int = MAX_DISPLAY_PRODUCTS
+) -> pd.DataFrame:
+    """Limit dataframe to at most ``max_products`` unique product codes.
+
+    When the number of products exceeds the limit, the top products are
+    selected based on the latest ``year_sum`` values.
+    """
+    codes = dfp["product_code"].unique()
+    if len(codes) <= max_products:
+        return dfp
+    snapshot = dfp.sort_values("month").groupby("product_code").tail(1)
+    top_codes = snapshot.nlargest(max_products, "year_sum")["product_code"]
+    return dfp[dfp["product_code"].isin(top_codes)].copy()
 
 
 def _ensure_css():
@@ -202,14 +219,26 @@ def toolbar_sku_detail(multi_mode: bool):
         )
     p1, p2, p3, p4, p5 = st.columns([1.4, 0.9, 0.9, 1.2, 0.9])
     with p1:
-        method_opts = ["なし", "ローカル線形±kσ", "Holt線形", "移動平均±kσ", "移動平均±MAD"]
-        f_method = st.selectbox("予測帯", method_opts, index=method_opts.index(ui.get("f_method", "なし")))
+        method_opts = [
+            "なし",
+            "ローカル線形±kσ",
+            "Holt線形",
+            "移動平均±kσ",
+            "移動平均±MAD",
+        ]
+        f_method = st.selectbox(
+            "予測帯", method_opts, index=method_opts.index(ui.get("f_method", "なし"))
+        )
         ui["f_method"] = f_method
     with p2:
-        f_win = st.selectbox("学習窓幅", [6, 9, 12], index=[6, 9, 12].index(ui.get("f_win", 12)))
+        f_win = st.selectbox(
+            "学習窓幅", [6, 9, 12], index=[6, 9, 12].index(ui.get("f_win", 12))
+        )
         ui["f_win"] = f_win
     with p3:
-        f_h = st.selectbox("先の予測ステップ", [3, 6, 12], index=[3, 6, 12].index(ui.get("f_h", 6)))
+        f_h = st.selectbox(
+            "先の予測ステップ", [3, 6, 12], index=[3, 6, 12].index(ui.get("f_h", 6))
+        )
         ui["f_h"] = f_h
     with p4:
         f_k = st.slider("バンド幅k", 1.5, 3.0, ui.get("f_k", 2.0), 0.1)
@@ -218,7 +247,9 @@ def toolbar_sku_detail(multi_mode: bool):
         f_robust = st.checkbox("ロバスト(MAD)", value=ui.get("f_robust", False))
         ui["f_robust"] = f_robust
     anom_opts = ["OFF", "z≥2.5", "MAD≥3.5"]
-    anomaly = st.selectbox("異常検知", anom_opts, index=anom_opts.index(ui.get("anomaly", "OFF")))
+    anomaly = st.selectbox(
+        "異常検知", anom_opts, index=anom_opts.index(ui.get("anomaly", "OFF"))
+    )
     ui["anomaly"] = anomaly
     st.session_state["ui"] = ui
     return dict(
@@ -247,6 +278,9 @@ def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None):
     dfp = df_long.sort_values("month").groupby("product_code").tail(months)
     if selected_codes:
         dfp = dfp[dfp["product_code"].isin(selected_codes)].copy()
+    if dfp["product_code"].nunique() > MAX_DISPLAY_PRODUCTS:
+        st.warning(f"表示件数が多いため上位{MAX_DISPLAY_PRODUCTS}件のみを描画します")
+        dfp = limit_products(dfp)
 
     scale = UNIT_SCALE[tb["unit"]]
     dfp["year_sum_disp"] = dfp["year_sum"] / scale
@@ -254,8 +288,14 @@ def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None):
     if multi_mode and tb.get("slope_conf"):
         sc = tb["slope_conf"]
         snap = slopes_snapshot(dfp, n=sc["n_win"])
-        key = {"円/月": "slope_yen", "%/月": "slope_ratio", "zスコア": "slope_z"}[sc["thr_type"]]
-        mask = (snap[key] >= sc["thr_val"]) if sc["cmp_mode"] == "以上" else (snap[key] <= sc["thr_val"])
+        key = {"円/月": "slope_yen", "%/月": "slope_ratio", "zスコア": "slope_z"}[
+            sc["thr_type"]
+        ]
+        mask = (
+            (snap[key] >= sc["thr_val"])
+            if sc["cmp_mode"] == "以上"
+            else (snap[key] <= sc["thr_val"])
+        )
         codes_by_slope = set(snap.loc[mask, "product_code"])
         if sc.get("quick") and sc["quick"] != "なし":
             snapshot = dfp.sort_values("month").groupby("product_code").tail(1)
@@ -264,9 +304,15 @@ def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None):
             elif sc["quick"] == "Top10":
                 quick_codes = snapshot.nlargest(10, "year_sum")["product_code"]
             elif sc["quick"] == "最新YoY上位":
-                quick_codes = snapshot.dropna(subset=["yoy"]).sort_values("yoy", ascending=False).head(10)["product_code"]
+                quick_codes = (
+                    snapshot.dropna(subset=["yoy"])
+                    .sort_values("yoy", ascending=False)
+                    .head(10)["product_code"]
+                )
             elif sc["quick"] == "直近6M伸長上位":
-                quick_codes = top_growth_codes(dfp, dfp["month"].max(), window=6, top=10)
+                quick_codes = top_growth_codes(
+                    dfp, dfp["month"].max(), window=6, top=10
+                )
             else:
                 quick_codes = snapshot["product_code"]
             codes_by_slope = codes_by_slope & set(quick_codes)
@@ -288,7 +334,13 @@ def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None):
         else:
             dfp = dfp[dfp["product_code"].isin(codes_by_slope)]
 
-    fig = px.line(dfp, x="month", y="year_sum_disp", color="display_name", custom_data=["display_name"])
+    fig = px.line(
+        dfp,
+        x="month",
+        y="year_sum_disp",
+        color="display_name",
+        custom_data=["display_name"],
+    )
     fig.update_yaxes(title_text=f"売上 年計（{tb['unit']}）", tickformat="~,d")
     fig.update_traces(
         mode="lines+markers",
@@ -296,7 +348,13 @@ def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None):
     )
     if band_range:
         low, high = band_range
-        fig.add_hrect(y0=low / scale, y1=high / scale, fillcolor="green", opacity=0.12, line_width=0)
+        fig.add_hrect(
+            y0=low / scale,
+            y1=high / scale,
+            fillcolor="green",
+            opacity=0.12,
+            line_width=0,
+        )
 
     fig.update_layout(
         dragmode={"パン": "pan", "ズーム": "zoom", "選択": "select"}[tb["op_mode"]],
@@ -312,29 +370,62 @@ def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None):
         for name, d in dfp.groupby("display_name"):
             s = d.sort_values("month").set_index("month")["year_sum"]
             if method == "ローカル線形±kσ":
-                f, lo, hi = forecast_linear_band(s, window=win, horizon=horizon, k=k, robust=robust)
+                f, lo, hi = forecast_linear_band(
+                    s, window=win, horizon=horizon, k=k, robust=robust
+                )
             elif method == "Holt線形":
                 f = forecast_holt_linear(s, horizon=horizon)
-                f2, lo, hi = forecast_linear_band(s, window=win, horizon=horizon, k=k, robust=robust)
+                f2, lo, hi = forecast_linear_band(
+                    s, window=win, horizon=horizon, k=k, robust=robust
+                )
                 lo, hi = f - (f2 - lo), f + (hi - f2)
             elif method == "移動平均±kσ":
-                f, lo, hi = band_from_moving_stats(s, window=win, horizon=horizon, k=k, robust=False)
+                f, lo, hi = band_from_moving_stats(
+                    s, window=win, horizon=horizon, k=k, robust=False
+                )
             else:
-                f, lo, hi = band_from_moving_stats(s, window=win, horizon=horizon, k=k, robust=True)
+                f, lo, hi = band_from_moving_stats(
+                    s, window=win, horizon=horizon, k=k, robust=True
+                )
             if len(f) == 0:
                 continue
             last_t = pd.to_datetime(d["month"].max())
-            future_idx = pd.period_range(last_t.to_period("M"), periods=horizon, freq="M").to_timestamp() + pd.offsets.MonthBegin(1)
-            fig.add_scatter(x=future_idx, y=f/scale, mode="lines", name=f"{name}予測", line=dict(dash="dash"), showlegend=False)
-            fig.add_scatter(x=future_idx, y=hi/scale, mode="lines", line=dict(width=0), showlegend=False)
-            fig.add_scatter(x=future_idx, y=lo/scale, mode="lines", fill="tonexty", line=dict(width=0), fillcolor="rgba(113,178,255,.18)", showlegend=False)
+            future_idx = pd.period_range(
+                last_t.to_period("M"), periods=horizon, freq="M"
+            ).to_timestamp() + pd.offsets.MonthBegin(1)
+            fig.add_scatter(
+                x=future_idx,
+                y=f / scale,
+                mode="lines",
+                name=f"{name}予測",
+                line=dict(dash="dash"),
+                showlegend=False,
+            )
+            fig.add_scatter(
+                x=future_idx,
+                y=hi / scale,
+                mode="lines",
+                line=dict(width=0),
+                showlegend=False,
+            )
+            fig.add_scatter(
+                x=future_idx,
+                y=lo / scale,
+                mode="lines",
+                fill="tonexty",
+                line=dict(width=0),
+                fillcolor="rgba(113,178,255,.18)",
+                showlegend=False,
+            )
 
     if tb.get("anomaly") and tb["anomaly"] != "OFF":
         robust = tb["anomaly"].startswith("MAD")
         thr = 3.5 if robust else 2.5
         for name, d in dfp.groupby("display_name"):
             s = d.sort_values("month").set_index("month")["year_sum"]
-            res = detect_linear_anomalies(s, window=tb.get("forecast_window", 12), threshold=thr, robust=robust)
+            res = detect_linear_anomalies(
+                s, window=tb.get("forecast_window", 12), threshold=thr, robust=robust
+            )
             if res.empty:
                 continue
             fig.add_scatter(
@@ -363,7 +454,9 @@ def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None):
         idxmax = dfp.loc[g["year_sum"].idxmax().dropna()]
         idxmin = dfp.loc[g["year_sum"].idxmin().dropna()]
         ystart = g.head(1)
-        df_nodes = pd.concat([latest, idxmax, idxmin, ystart]).drop_duplicates(["display_name", "month"])
+        df_nodes = pd.concat([latest, idxmax, idxmin, ystart]).drop_duplicates(
+            ["display_name", "month"]
+        )
     elif tb["node_mode"] == "すべて":
         df_nodes = dfp.copy()
     else:
@@ -377,7 +470,9 @@ def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None):
             name=name,
             legendgroup=name,
             showlegend=False,
-            marker=dict(size=6, symbol="circle", line=dict(color=halo, width=2), opacity=0.95),
+            marker=dict(
+                size=6, symbol="circle", line=dict(color=halo, width=2), opacity=0.95
+            ),
             customdata=np.stack([d["display_name"]], axis=-1),
             hovertemplate="<b>%{customdata[0]}</b><br>月：%{x|%Y-%m}<br>年計：%{y:,.0f} {tb['unit']}<extra></extra>",
         )
