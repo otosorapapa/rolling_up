@@ -1,4 +1,3 @@
-
 import io
 import json
 import math
@@ -41,6 +40,7 @@ PLOTLY_CONFIG = {
     "toImageButtonOptions": {"format": "png", "filename": "年計比較"},
 }
 
+
 @st.cache_data(ttl=600)
 def _ai_sum_df(df: pd.DataFrame) -> str:
     return summarize_dataframe(df)
@@ -54,6 +54,7 @@ def _ai_explain(d: dict) -> str:
 @st.cache_data(ttl=600)
 def _ai_comment(t: str) -> str:
     return generate_comment(t)
+
 
 from services import (
     parse_uploaded_table,
@@ -78,7 +79,9 @@ from core.chart_card import toolbar_sku_detail, build_chart_card
 from core.plot_utils import apply_elegant_theme
 
 APP_TITLE = "売上年計（12カ月移動累計）ダッシュボード"
-st.set_page_config(page_title=APP_TITLE, layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(
+    page_title=APP_TITLE, layout="wide", initial_sidebar_state="expanded"
+)
 
 # High contrast theme
 st.markdown(
@@ -187,7 +190,9 @@ def log_click(name: str):
 # ---------------- Helpers ----------------
 def require_data():
     if st.session_state.data_year is None or st.session_state.data_monthly is None:
-        st.info("データが未取り込みです。左メニュー「データ取込」からアップロードしてください。")
+        st.info(
+            "データが未取り込みです。左メニュー「データ取込」からアップロードしてください。"
+        )
         st.stop()
 
 
@@ -198,11 +203,17 @@ def month_options(df: pd.DataFrame) -> List[str]:
 def end_month_selector(df: pd.DataFrame, key="end_month"):
     mopts = month_options(df)
     default = mopts[-1] if mopts else None
-    return st.selectbox("終端月（年計の計算対象）", mopts, index=(len(mopts)-1) if mopts else 0, key=key)
+    return st.selectbox(
+        "終端月（年計の計算対象）",
+        mopts,
+        index=(len(mopts) - 1) if mopts else 0,
+        key=key,
+    )
 
 
 def download_excel(df: pd.DataFrame, filename: str) -> bytes:
     import xlsxwriter  # noqa
+
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         df.to_excel(writer, index=False, sheet_name="data")
@@ -213,6 +224,7 @@ def download_pdf_overview(kpi: dict, top_df: pd.DataFrame, filename: str) -> byt
     # Minimal PDF using reportlab (text only)
     from reportlab.lib.pagesizes import A4
     from reportlab.pdfgen import canvas
+
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     w, h = A4
@@ -231,7 +243,11 @@ def download_pdf_overview(kpi: dict, top_df: pd.DataFrame, filename: str) -> byt
     c.setFont("Helvetica", 10)
     cols = ["product_code", "product_name", "year_sum"]
     for _, row in top_df[cols].head(10).iterrows():
-        c.drawString(40, y, f"{row['product_code']}  {row['product_name']}  {int(row['year_sum']):,}")
+        c.drawString(
+            40,
+            y,
+            f"{row['product_code']}  {row['product_name']}  {int(row['year_sum']):,}",
+        )
         y -= 12
         if y < 60:
             c.showPage()
@@ -392,17 +408,23 @@ page = st.sidebar.radio(
 if page == "データ取込":
     st.header("データ取込 / マッピング / 品質チェック")
 
-    st.markdown("**Excel(.xlsx) / CSV をアップロードしてください。** "
-                "列に `YYYY-MM`（または日付系）形式の月度が含まれている必要があります。")
+    st.markdown(
+        "**Excel(.xlsx) / CSV をアップロードしてください。** "
+        "列に `YYYY-MM`（または日付系）形式の月度が含まれている必要があります。"
+    )
 
-    col_u1, col_u2 = st.columns([2,1])
+    col_u1, col_u2 = st.columns([2, 1])
     with col_u1:
-        file = st.file_uploader("ファイル選択", type=["xlsx","csv"])
+        file = st.file_uploader("ファイル選択", type=["xlsx", "csv"])
     with col_u2:
-        st.session_state.settings["missing_policy"] = st.selectbox("欠測月ポリシー",
-            options=["zero_fill","mark_missing"],
-            format_func=lambda x: "ゼロ補完(推奨)" if x=="zero_fill" else "欠測含む窓は非計上",
-            index=0)
+        st.session_state.settings["missing_policy"] = st.selectbox(
+            "欠測月ポリシー",
+            options=["zero_fill", "mark_missing"],
+            format_func=lambda x: (
+                "ゼロ補完(推奨)" if x == "zero_fill" else "欠測含む窓は非計上"
+            ),
+            index=0,
+        )
 
     if file is not None:
         try:
@@ -419,34 +441,55 @@ if page == "データ取込":
 
         cols = df_raw.columns.tolist()
         product_name_col = st.selectbox("商品名列の選択", options=cols, index=0)
-        product_code_col = st.selectbox("商品コード列の選択（任意）", options=["<なし>"] + cols, index=0)
+        product_code_col = st.selectbox(
+            "商品コード列の選択（任意）", options=["<なし>"] + cols, index=0
+        )
         code_col = None if product_code_col == "<なし>" else product_code_col
 
         if st.button("変換＆取込", type="primary"):
             try:
-                long_df = parse_uploaded_table(df_raw, product_name_col=product_name_col, product_code_col=code_col)
-                long_df = fill_missing_months(long_df, policy=st.session_state.settings["missing_policy"])
+                long_df = parse_uploaded_table(
+                    df_raw, product_name_col=product_name_col, product_code_col=code_col
+                )
+                long_df = fill_missing_months(
+                    long_df, policy=st.session_state.settings["missing_policy"]
+                )
                 # Compute year rolling & slopes
-                year_df = compute_year_rolling(long_df, window=st.session_state.settings["window"],
-                                               policy=st.session_state.settings["missing_policy"])
-                year_df = compute_slopes(year_df, last_n=st.session_state.settings["last_n"])
+                year_df = compute_year_rolling(
+                    long_df,
+                    window=st.session_state.settings["window"],
+                    policy=st.session_state.settings["missing_policy"],
+                )
+                year_df = compute_slopes(
+                    year_df, last_n=st.session_state.settings["last_n"]
+                )
 
                 st.session_state.data_monthly = long_df
                 st.session_state.data_year = year_df
-                st.success("取込完了。ダッシュボードへ移動して可視化を確認してください。")
+                st.success(
+                    "取込完了。ダッシュボードへ移動して可視化を確認してください。"
+                )
 
                 st.subheader("品質チェック（欠測月/非数値/重複）")
                 # 欠測月
                 miss_rate = (long_df["is_missing"].sum(), len(long_df))
                 st.write(f"- 欠測セル数: {miss_rate[0]:,} / {miss_rate[1]:,}")
                 # 月レンジ
-                st.write(f"- データ期間: {long_df['month'].min()} 〜 {long_df['month'].max()}")
+                st.write(
+                    f"- データ期間: {long_df['month'].min()} 〜 {long_df['month'].max()}"
+                )
                 # SKU数
                 st.write(f"- SKU数: {long_df['product_code'].nunique():,}")
                 st.write(f"- レコード数: {len(long_df):,}")
 
-                st.download_button("年計テーブルをCSVでダウンロード", data=st.session_state.data_year.to_csv(index=False).encode("utf-8-sig"),
-                                   file_name="year_rolling.csv", mime="text/csv")
+                st.download_button(
+                    "年計テーブルをCSVでダウンロード",
+                    data=st.session_state.data_year.to_csv(index=False).encode(
+                        "utf-8-sig"
+                    ),
+                    file_name="year_rolling.csv",
+                    mime="text/csv",
+                )
             except Exception as e:
                 st.exception(e)
 
@@ -470,7 +513,9 @@ elif page == "ダッシュボード":
             st.selectbox(
                 "単位",
                 options=list(UNIT_MAP.keys()),
-                index=list(UNIT_MAP.keys()).index(st.session_state.settings.get("currency_unit", "円")),
+                index=list(UNIT_MAP.keys()).index(
+                    st.session_state.settings.get("currency_unit", "円")
+                ),
                 key="cmd_unit",
                 on_change=lambda: log_click("単位"),
             )
@@ -478,10 +523,12 @@ elif page == "ダッシュボード":
     # update settings and filter log
     st.session_state.settings["window"] = st.session_state.cmd_period
     st.session_state.settings["currency_unit"] = st.session_state.cmd_unit
-    st.session_state.filters.update({
-        "period": st.session_state.cmd_period,
-        "currency_unit": st.session_state.cmd_unit,
-    })
+    st.session_state.filters.update(
+        {
+            "period": st.session_state.cmd_period,
+            "currency_unit": st.session_state.cmd_unit,
+        }
+    )
 
     end_m = end_month_selector(st.session_state.data_year, key="end_month_dash")
 
@@ -523,9 +570,13 @@ elif page == "ダッシュボード":
             st.caption(_ai_comment("直近の年計トレンドと上位SKUの動向"))
 
     # 総合年計トレンド（全SKU合計）
-    totals = st.session_state.data_year.groupby("month", as_index=False)["year_sum"].sum()
+    totals = st.session_state.data_year.groupby("month", as_index=False)[
+        "year_sum"
+    ].sum()
     totals["year_sum_disp"] = totals["year_sum"] / UNIT_MAP[unit]
-    fig = px.line(totals, x="month", y="year_sum_disp", title="総合 年計トレンド", markers=True)
+    fig = px.line(
+        totals, x="month", y="year_sum_disp", title="総合 年計トレンド", markers=True
+    )
     fig.update_yaxes(title=f"年計({unit})", tickformat="~,d")
     fig.update_layout(height=350, margin=dict(l=10, r=10, t=50, b=10))
     fig = apply_elegant_theme(fig, theme=st.session_state.get("ui_theme", "dark"))
@@ -536,7 +587,9 @@ elif page == "ダッシュボード":
     snap_disp = snap.copy()
     snap_disp["year_sum"] = snap_disp["year_sum"] / UNIT_MAP[unit]
     st.dataframe(
-        snap_disp[["product_code", "product_name", "year_sum", "yoy", "delta"]].head(20),
+        snap_disp[["product_code", "product_name", "year_sum", "yoy", "delta"]].head(
+            20
+        ),
         use_container_width=True,
     )
     st.download_button(
@@ -547,19 +600,31 @@ elif page == "ダッシュボード":
     )
 
     # PDF出力（KPI + TOP10）
-    pdf_bytes = download_pdf_overview({"total_year_sum": int(kpi["total_year_sum"]),
-                                       "yoy": round(kpi["yoy"],4) if kpi["yoy"] is not None else None,
-                                       "delta": int(kpi["delta"]) if kpi["delta"] is not None else None},
-                                      snap, filename=f"overview_{end_m}.pdf")
-    st.download_button("会議用PDF（KPI+Top10）を出力", data=pdf_bytes, file_name=f"overview_{end_m}.pdf", mime="application/pdf")
+    pdf_bytes = download_pdf_overview(
+        {
+            "total_year_sum": int(kpi["total_year_sum"]),
+            "yoy": round(kpi["yoy"], 4) if kpi["yoy"] is not None else None,
+            "delta": int(kpi["delta"]) if kpi["delta"] is not None else None,
+        },
+        snap,
+        filename=f"overview_{end_m}.pdf",
+    )
+    st.download_button(
+        "会議用PDF（KPI+Top10）を出力",
+        data=pdf_bytes,
+        file_name=f"overview_{end_m}.pdf",
+        mime="application/pdf",
+    )
 
 # 3) ランキング
 elif page == "ランキング":
     require_data()
     st.header("ランキング / ワースト")
     end_m = end_month_selector(st.session_state.data_year, key="end_month_rank")
-    metric = st.selectbox("指標", options=["year_sum","yoy","delta","slope_beta"], index=0)
-    order = st.radio("並び順", options=["desc","asc"], horizontal=True)
+    metric = st.selectbox(
+        "指標", options=["year_sum", "yoy", "delta", "slope_beta"], index=0
+    )
+    order = st.radio("並び順", options=["desc", "asc"], horizontal=True)
     hide_zero = st.checkbox("年計ゼロを除外", value=True)
 
     ai_on = st.toggle(
@@ -568,7 +633,9 @@ elif page == "ランキング":
         help="要約・コメント・自動説明を表示（オンデマンド計算）",
     )
 
-    snap = st.session_state.data_year[st.session_state.data_year["month"] == end_m].copy()
+    snap = st.session_state.data_year[
+        st.session_state.data_year["month"] == end_m
+    ].copy()
     total = len(snap)
     zero_cnt = int((snap["year_sum"] == 0).sum())
     if hide_zero:
@@ -578,7 +645,9 @@ elif page == "ランキング":
     st.caption(f"除外 {zero_cnt} 件 / 全 {total} 件")
 
     fig_bar = px.bar(snap.head(20), x="product_name", y=metric)
-    fig_bar = apply_elegant_theme(fig_bar, theme=st.session_state.get("ui_theme", "dark"))
+    fig_bar = apply_elegant_theme(
+        fig_bar, theme=st.session_state.get("ui_theme", "dark")
+    )
     st.plotly_chart(fig_bar, use_container_width=True, config=PLOTLY_CONFIG)
 
     if ai_on and not snap.empty:
@@ -586,7 +655,9 @@ elif page == "ランキング":
         st.caption(_ai_comment("上位と下位の入替やYoYの極端値に注意"))
 
     st.dataframe(
-        snap[["product_code", "product_name", "year_sum", "yoy", "delta", "slope_beta"]].head(100),
+        snap[
+            ["product_code", "product_name", "year_sum", "yoy", "delta", "slope_beta"]
+        ].head(100),
         use_container_width=True,
     )
 
@@ -603,7 +674,6 @@ elif page == "ランキング":
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
-
     # 4) 比較ビュー（マルチ商品バンド）
 elif page == "比較ビュー":
     require_data()
@@ -617,13 +687,17 @@ elif page == "比較ビュー":
 
     search = st.text_input("検索ボックス", "")
     if search:
-        snapshot = snapshot[snapshot["display_name"].str.contains(search, case=False, na=False)]
+        snapshot = snapshot[
+            snapshot["display_name"].str.contains(search, case=False, na=False)
+        ]
     # ---- 操作バー＋グラフ密着カード ----
 
     band_params = params.get("band_params", {})
     max_amount = int(snapshot["year_sum"].max()) if not snapshot.empty else 0
     low0 = int(
-        band_params.get("low_amount", int(snapshot["year_sum"].min()) if not snapshot.empty else 0)
+        band_params.get(
+            "low_amount", int(snapshot["year_sum"].min()) if not snapshot.empty else 0
+        )
     )
     high0 = int(band_params.get("high_amount", max_amount))
 
@@ -647,16 +721,27 @@ elif page == "比較ビュー":
         unsafe_allow_html=True,
     )
 
-    st.markdown('<section class="chart-card" id="line-compare">', unsafe_allow_html=True)
+    st.markdown(
+        '<section class="chart-card" id="line-compare">', unsafe_allow_html=True
+    )
 
     st.markdown('<div class="chart-toolbar">', unsafe_allow_html=True)
     c1, c2, c3, c4, c5 = st.columns([1.2, 1.6, 1.1, 1.0, 0.9])
     with c1:
-        period = st.radio("期間", ["12ヶ月", "24ヶ月", "36ヶ月"], horizontal=True, index=1)
+        period = st.radio(
+            "期間", ["12ヶ月", "24ヶ月", "36ヶ月"], horizontal=True, index=1
+        )
     with c2:
-        node_mode = st.radio("ノード表示", ["自動", "主要ノードのみ", "すべて", "非表示"], horizontal=True, index=0)
+        node_mode = st.radio(
+            "ノード表示",
+            ["自動", "主要ノードのみ", "すべて", "非表示"],
+            horizontal=True,
+            index=0,
+        )
     with c3:
-        hover_mode = st.radio("ホバー", ["個別", "同月まとめ"], horizontal=True, index=0)
+        hover_mode = st.radio(
+            "ホバー", ["個別", "同月まとめ"], horizontal=True, index=0
+        )
     with c4:
         op_mode = st.radio("操作", ["パン", "ズーム", "選択"], horizontal=True, index=0)
     with c5:
@@ -668,9 +753,13 @@ elif page == "比較ビュー":
             "バンド",
             ["金額指定", "商品指定(2)", "パーセンタイル", "順位帯", "ターゲット近傍"],
             horizontal=True,
-            index=["金額指定", "商品指定(2)", "パーセンタイル", "順位帯", "ターゲット近傍"].index(
-                params.get("band_mode", "金額指定")
-            ),
+            index=[
+                "金額指定",
+                "商品指定(2)",
+                "パーセンタイル",
+                "順位帯",
+                "ターゲット近傍",
+            ].index(params.get("band_mode", "金額指定")),
         )
     with c7:
         band_params = params.get("band_params", {})
@@ -691,23 +780,32 @@ elif page == "比較ビュー":
             band_params = {"low_amount": int(low), "high_amount": int(high)}
         elif band_mode == "商品指定(2)" and not snapshot.empty:
             opts = (
-                snapshot["product_code"].fillna("") + " | " + snapshot["display_name"].fillna("")
+                snapshot["product_code"].fillna("")
+                + " | "
+                + snapshot["display_name"].fillna("")
             ).tolist()
             opts = [o for o in opts if o.strip() != "|"]
             prod_a = st.selectbox("商品A", opts, index=0)
             prod_b = st.selectbox("商品B", opts, index=1 if len(opts) > 1 else 0)
-            band_params = {"prod_a": prod_a.split(" | ")[0], "prod_b": prod_b.split(" | ")[0]}
+            band_params = {
+                "prod_a": prod_a.split(" | ")[0],
+                "prod_b": prod_b.split(" | ")[0],
+            }
         elif band_mode == "パーセンタイル" and not snapshot.empty:
             p_low, p_high = band_params.get("p_low", 0), band_params.get("p_high", 100)
             p_low, p_high = st.slider("百分位(%)", 0, 100, (int(p_low), int(p_high)))
             band_params = {"p_low": p_low, "p_high": p_high}
         elif band_mode == "順位帯" and not snapshot.empty:
             max_rank = int(snapshot["rank"].max()) if not snapshot.empty else 1
-            r_low, r_high = band_params.get("r_low", 1), band_params.get("r_high", max_rank)
+            r_low, r_high = band_params.get("r_low", 1), band_params.get(
+                "r_high", max_rank
+            )
             r_low, r_high = st.slider("順位", 1, max_rank, (int(r_low), int(r_high)))
             band_params = {"r_low": r_low, "r_high": r_high}
         else:
-            opts = (snapshot["product_code"] + " | " + snapshot["display_name"]).tolist()
+            opts = (
+                snapshot["product_code"] + " | " + snapshot["display_name"]
+            ).tolist()
             tlabel = st.selectbox("基準商品", opts, index=0) if opts else ""
             tcode = tlabel.split(" | ")[0] if tlabel else ""
             by = st.radio("幅指定", ["金額", "%"], horizontal=True)
@@ -718,7 +816,9 @@ elif page == "比較ビュー":
             else:
                 width_default = 0.1
                 width = st.number_input(
-                    "幅", value=float(band_params.get("width", width_default)), step=width_default / 10
+                    "幅",
+                    value=float(band_params.get("width", width_default)),
+                    step=width_default / 10,
                 )
                 band_params = {"target_code": tcode, "by": "pct", "width": width}
     with c8:
@@ -752,7 +852,9 @@ elif page == "比較ビュー":
     with c15:
         cmp_mode = st.radio("傾き条件", ["以上", "未満"], horizontal=True)
     with c16:
-        thr_type = st.radio("しきい値の種類", ["円/月", "%/月", "zスコア"], horizontal=True)
+        thr_type = st.radio(
+            "しきい値の種類", ["円/月", "%/月", "zスコア"], horizontal=True
+        )
     with c17:
         if thr_type == "円/月":
             thr_val = int_input("しきい値", 0)
@@ -764,8 +866,12 @@ elif page == "比較ビュー":
     with c19:
         z_thr = st.slider("急勾配 zスコア", 0.0, 3.0, 0.0, 0.1)
     with c20:
-        shape_pick = st.radio("形状抽出", ["（なし）", "急勾配", "山（への字）", "谷（逆への字）"], horizontal=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+        shape_pick = st.radio(
+            "形状抽出",
+            ["（なし）", "急勾配", "山（への字）", "谷（逆への字）"],
+            horizontal=True,
+        )
+    st.markdown("</div>", unsafe_allow_html=True)
 
     params = {
         "end_month": end_m,
@@ -791,13 +897,16 @@ elif page == "比較ビュー":
         codes = snapshot.nlargest(10, "year_sum")["product_code"].tolist()
     elif quick == "最新YoY上位":
         codes = (
-            snapshot.dropna(subset=["yoy"]).sort_values("yoy", ascending=False).head(10)["product_code"].tolist()
+            snapshot.dropna(subset=["yoy"])
+            .sort_values("yoy", ascending=False)
+            .head(10)["product_code"]
+            .tolist()
         )
     elif quick == "直近6M伸長上位":
         codes = top_growth_codes(year_df, end_m, window=6, top=10)
 
     snap = slopes_snapshot(year_df, n=n_win)
-    if   thr_type == "円/月":
+    if thr_type == "円/月":
         key, v = "slope_yen", float(thr_val)
     elif thr_type == "%/月":
         key, v = "slope_ratio", float(thr_val)
@@ -816,7 +925,12 @@ elif page == "比較ビュー":
     codes_steep = set(snap.loc[snap["slope_z"].abs() >= z_thr, "product_code"])
     codes_mtn = set(shape_df.loc[shape_df["is_mountain"], "product_code"])
     codes_val = set(shape_df.loc[shape_df["is_valley"], "product_code"])
-    shape_map = {"（なし）": None, "急勾配": codes_steep, "山（への字）": codes_mtn, "谷（逆への字）": codes_val}
+    shape_map = {
+        "（なし）": None,
+        "急勾配": codes_steep,
+        "山（への字）": codes_mtn,
+        "谷（逆への字）": codes_val,
+    }
     codes_by_shape = shape_map[shape_pick] or set(snap["product_code"])
 
     codes_from_band = set(codes)
@@ -833,11 +947,12 @@ elif page == "比較ビュー":
     df_long["display_name"] = df_long["product_name"].fillna(df_long["product_code"])
 
     main_codes = target_codes
-    max_lines = 15
+    max_lines = 30
     if len(main_codes) > max_lines:
         top_order = (
             snapshot[snapshot["product_code"].isin(main_codes)]
-            .sort_values("year_sum", ascending=False)["product_code"].tolist()
+            .sort_values("year_sum", ascending=False)["product_code"]
+            .tolist()
         )
         main_codes = top_order[:max_lines]
 
@@ -887,12 +1002,21 @@ elif page == "比較ビュー":
     )
 
     st.markdown('<div class="chart-body">', unsafe_allow_html=True)
-    fig = build_chart_card(df_main, selected_codes=None, multi_mode=True, tb=tb_common, band_range=(low, high))
-    st.markdown('</div>', unsafe_allow_html=True)
-    st.markdown('</section>', unsafe_allow_html=True)
+    fig = build_chart_card(
+        df_main,
+        selected_codes=None,
+        multi_mode=True,
+        tb=tb_common,
+        band_range=(low, high),
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</section>", unsafe_allow_html=True)
 
-    st.caption("凡例クリックで表示切替、ダブルクリックで単独表示。ドラッグでズーム/パン、右上メニューからPNG/CSV取得可。")
-    st.markdown("""
+    st.caption(
+        "凡例クリックで表示切替、ダブルクリックで単独表示。ドラッグでズーム/パン、右上メニューからPNG/CSV取得可。"
+    )
+    st.markdown(
+        """
 傾き（円/月）：直近 n ヶ月の回帰直線の傾き。+は上昇、−は下降。
 
 %/月：傾き÷平均年計。規模によらず比較可能。
@@ -900,11 +1024,12 @@ elif page == "比較ビュー":
 zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配の目安。
 
 山/谷：前半と後半の平均変化率の符号が**＋→−（山）／−→＋（谷）かつ振幅が十分**。
-""")
+"""
+    )
 
     snap_export = snapshot[snapshot["product_code"].isin(main_codes)].copy()
     snap_export[f"year_sum_{unit}"] = snap_export["year_sum"] / scale
-    snap_export = snap_export.drop(columns=["year_sum"]) 
+    snap_export = snap_export.drop(columns=["year_sum"])
     st.download_button(
         "CSVエクスポート",
         data=snap_export.to_csv(index=False).encode("utf-8-sig"),
@@ -913,12 +1038,19 @@ zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配�
     )
     try:
         png_bytes = fig.to_image(format="png")
-        st.download_button("PNGエクスポート", data=png_bytes, file_name=f"band_overlay_{end_m}.png", mime="image/png")
+        st.download_button(
+            "PNGエクスポート",
+            data=png_bytes,
+            file_name=f"band_overlay_{end_m}.png",
+            mime="image/png",
+        )
     except Exception:
         pass
 
     with st.expander("分布（オプション）", expanded=False):
-        hist_fig = apply_elegant_theme(hist_fig, theme=st.session_state.get("ui_theme", "dark"))
+        hist_fig = apply_elegant_theme(
+            hist_fig, theme=st.session_state.get("ui_theme", "dark")
+        )
         st.plotly_chart(hist_fig, use_container_width=True)
 
     # ---- Small Multiples ----
@@ -938,7 +1070,12 @@ zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配�
     page_codes = main_codes[start : start + per_page]
     col_count = 4
     cols = st.columns(col_count)
-    ymax = df_long[df_long["product_code"].isin(main_codes)]["year_sum"].max() / UNIT_MAP[unit] if share_y else None
+    ymax = (
+        df_long[df_long["product_code"].isin(main_codes)]["year_sum"].max()
+        / UNIT_MAP[unit]
+        if share_y
+        else None
+    )
     for i, code in enumerate(page_codes):
         g = df_long[df_long["product_code"] == code]
         disp = g["display_name"].iloc[0] if not g.empty else code
@@ -958,18 +1095,34 @@ zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配�
             hovertemplate=f"<b>%{{customdata[0]}}</b><br>月：%{{x|%Y-%m}}<br>年計：%{{y:,.0f}} {unit}<extra></extra>",
         )
         fig_s.update_xaxes(tickformat="%Y-%m", dtick=dtick, title_text="月（YYYY-MM）")
-        fig_s.update_yaxes(tickformat="~,d", range=[0, ymax] if ymax else None, title_text=f"売上 年計（{unit}）")
+        fig_s.update_yaxes(
+            tickformat="~,d",
+            range=[0, ymax] if ymax else None,
+            title_text=f"売上 年計（{unit}）",
+        )
         fig_s.update_layout(font=dict(family="Noto Sans JP, Meiryo, Arial", size=12))
-        fig_s.update_layout(hoverlabel=dict(bgcolor="rgba(30,30,30,0.92)", font=dict(color="#fff", size=12)))
+        fig_s.update_layout(
+            hoverlabel=dict(
+                bgcolor="rgba(30,30,30,0.92)", font=dict(color="#fff", size=12)
+            )
+        )
         fig_s.update_layout(dragmode=drag)
         if hover_mode == "個別":
             fig_s.update_layout(hovermode="closest")
         else:
             fig_s.update_layout(hovermode="x unified", hoverlabel=dict(align="left"))
-        last_val = g.sort_values("month")["year_sum"].iloc[-1] / UNIT_MAP[unit] if not g.empty else np.nan
+        last_val = (
+            g.sort_values("month")["year_sum"].iloc[-1] / UNIT_MAP[unit]
+            if not g.empty
+            else np.nan
+        )
         with cols[i % col_count]:
-            st.metric(disp, f"{last_val:,.0f} {unit}" if not np.isnan(last_val) else "—")
-            fig_s = apply_elegant_theme(fig_s, theme=st.session_state.get("ui_theme", "dark"))
+            st.metric(
+                disp, f"{last_val:,.0f} {unit}" if not np.isnan(last_val) else "—"
+            )
+            fig_s = apply_elegant_theme(
+                fig_s, theme=st.session_state.get("ui_theme", "dark")
+            )
             st.plotly_chart(
                 fig_s,
                 use_container_width=True,
@@ -982,7 +1135,11 @@ elif page == "SKU詳細":
     require_data()
     st.header("SKU 詳細")
     end_m = end_month_selector(st.session_state.data_year, key="end_month_detail")
-    prods = st.session_state.data_year[["product_code", "product_name"]].drop_duplicates().sort_values("product_code")
+    prods = (
+        st.session_state.data_year[["product_code", "product_name"]]
+        .drop_duplicates()
+        .sort_values("product_code")
+    )
     mode = st.radio("表示モード", ["単品", "複数比較"], horizontal=True)
     tb = toolbar_sku_detail(multi_mode=(mode == "複数比較"))
     df_year = st.session_state.data_year.copy()
@@ -995,7 +1152,9 @@ elif page == "SKU詳細":
     )
 
     if mode == "単品":
-        prod_label = st.selectbox("SKU選択", options=prods["product_code"] + " | " + prods["product_name"])
+        prod_label = st.selectbox(
+            "SKU選択", options=prods["product_code"] + " | " + prods["product_name"]
+        )
         code = prod_label.split(" | ")[0]
         build_chart_card(df_year, selected_codes=[code], multi_mode=False, tb=tb)
 
@@ -1004,15 +1163,23 @@ elif page == "SKU詳細":
         if not row.empty:
             rr = row.iloc[0]
             c1, c2, c3 = st.columns(3)
-            c1.metric("年計", f"{int(rr['year_sum']) if not pd.isna(rr['year_sum']) else '—'}")
-            c2.metric("YoY", f"{rr['yoy']*100:.1f} %" if not pd.isna(rr["yoy"]) else "—")
+            c1.metric(
+                "年計", f"{int(rr['year_sum']) if not pd.isna(rr['year_sum']) else '—'}"
+            )
+            c2.metric(
+                "YoY", f"{rr['yoy']*100:.1f} %" if not pd.isna(rr["yoy"]) else "—"
+            )
             c3.metric("Δ", f"{int(rr['delta'])}" if not pd.isna(rr["delta"]) else "—")
 
         if ai_on and not row.empty:
             st.info(
                 _ai_explain(
                     {
-                        "年計": float(rr["year_sum"]) if not pd.isna(rr["year_sum"]) else 0.0,
+                        "年計": (
+                            float(rr["year_sum"])
+                            if not pd.isna(rr["year_sum"])
+                            else 0.0
+                        ),
                         "YoY": float(rr["yoy"]) if not pd.isna(rr["yoy"]) else 0.0,
                         "Δ": float(rr["delta"]) if not pd.isna(rr["delta"]) else 0.0,
                     }
@@ -1020,21 +1187,29 @@ elif page == "SKU詳細":
             )
 
         st.subheader("メモ / タグ")
-        note = st.text_area("メモ（保存で保持）", value=st.session_state.notes.get(code, ""), height=100)
-        tags_str = st.text_input("タグ（カンマ区切り）", value=",".join(st.session_state.tags.get(code, [])))
+        note = st.text_area(
+            "メモ（保存で保持）", value=st.session_state.notes.get(code, ""), height=100
+        )
+        tags_str = st.text_input(
+            "タグ（カンマ区切り）", value=",".join(st.session_state.tags.get(code, []))
+        )
         c1, c2 = st.columns([1, 1])
         if c1.button("保存"):
             st.session_state.notes[code] = note
-            st.session_state.tags[code] = [t.strip() for t in tags_str.split(",") if t.strip()]
+            st.session_state.tags[code] = [
+                t.strip() for t in tags_str.split(",") if t.strip()
+            ]
             st.success("保存しました")
         if c2.button("CSVでエクスポート"):
-            meta = pd.DataFrame([
-                {
-                    "product_code": code,
-                    "note": st.session_state.notes.get(code, ""),
-                    "tags": ",".join(st.session_state.tags.get(code, [])),
-                }
-            ])
+            meta = pd.DataFrame(
+                [
+                    {
+                        "product_code": code,
+                        "note": st.session_state.notes.get(code, ""),
+                        "tags": ",".join(st.session_state.tags.get(code, [])),
+                    }
+                ]
+            )
             st.download_button(
                 "ダウンロード",
                 data=meta.to_csv(index=False).encode("utf-8-sig"),
@@ -1043,7 +1218,7 @@ elif page == "SKU詳細":
             )
     else:
         opts = (prods["product_code"] + " | " + prods["product_name"]).tolist()
-        sel = st.multiselect("SKU選択（最大12件）", options=opts, max_selections=12)
+        sel = st.multiselect("SKU選択（最大30件）", options=opts, max_selections=30)
         codes = [s.split(" | ")[0] for s in sel]
         if codes or (tb.get("slope_conf") and tb["slope_conf"].get("quick") != "なし"):
             build_chart_card(df_year, selected_codes=codes, multi_mode=True, tb=tb)
@@ -1072,11 +1247,23 @@ elif page == "相関分析":
     end_m = end_month_selector(st.session_state.data_year, key="corr_end_month")
     snapshot = latest_yearsum_snapshot(st.session_state.data_year, end_m)
 
-    metric_opts = ["year_sum", "yoy", "delta", "slope_beta", "slope6m", "std6m", "hhi_share"]
+    metric_opts = [
+        "year_sum",
+        "yoy",
+        "delta",
+        "slope_beta",
+        "slope6m",
+        "std6m",
+        "hhi_share",
+    ]
     metrics = st.multiselect(
         "指標",
         [m for m in metric_opts if m in snapshot.columns],
-        default=[m for m in ["year_sum", "yoy", "delta", "slope_beta"] if m in snapshot.columns],
+        default=[
+            m
+            for m in ["year_sum", "yoy", "delta", "slope_beta"]
+            if m in snapshot.columns
+        ],
     )
     method = st.radio(
         "相関の種類",
@@ -1112,14 +1299,23 @@ elif page == "相関分析":
         if ai_on and not tbl.empty:
             r_mean = float(tbl["r"].abs().mean())
             st.info(
-                _ai_explain({"有意本数": int((tbl["sig"] == "有意(95%)").sum()), "平均|r|": r_mean})
+                _ai_explain(
+                    {
+                        "有意本数": int((tbl["sig"] == "有意(95%)").sum()),
+                        "平均|r|": r_mean,
+                    }
+                )
             )
 
         st.subheader("相関ヒートマップ")
         st.caption("右上=強い正、左下=強い負、白=関係薄")
         corr = df_plot[metrics].corr(method=method)
-        fig_corr = px.imshow(corr, color_continuous_scale="RdBu_r", zmin=-1, zmax=1, text_auto=True)
-        fig_corr = apply_elegant_theme(fig_corr, theme=st.session_state.get("ui_theme", "dark"))
+        fig_corr = px.imshow(
+            corr, color_continuous_scale="RdBu_r", zmin=-1, zmax=1, text_auto=True
+        )
+        fig_corr = apply_elegant_theme(
+            fig_corr, theme=st.session_state.get("ui_theme", "dark")
+        )
         st.plotly_chart(fig_corr, use_container_width=True, config=PLOTLY_CONFIG)
 
         st.subheader("ペア・エクスプローラ")
@@ -1133,7 +1329,9 @@ elif page == "相関分析":
             m, b, r2 = fit_line(df_xy[x_col], df_xy[y_col])
             r = df_xy[x_col].corr(df_xy[y_col], method=method)
             lo, hi = fisher_ci(r, len(df_xy))
-            fig_sc = px.scatter(df_xy, x=x_col, y=y_col, hover_data=["product_code", "product_name"])
+            fig_sc = px.scatter(
+                df_xy, x=x_col, y=y_col, hover_data=["product_code", "product_name"]
+            )
             xs = np.linspace(df_xy[x_col].min(), df_xy[x_col].max(), 100)
             fig_sc.add_trace(go.Scatter(x=xs, y=m * xs + b, mode="lines", name="回帰"))
             fig_sc.add_annotation(
@@ -1152,8 +1350,12 @@ elif page == "相関分析":
             outliers = df_xy.loc[resid.nlargest(3).index]
             for _, row in outliers.iterrows():
                 label = row["product_name"] or row["product_code"]
-                fig_sc.add_annotation(x=row[x_col], y=row[y_col], text=label, showarrow=True, arrowhead=1)
-            fig_sc = apply_elegant_theme(fig_sc, theme=st.session_state.get("ui_theme", "dark"))
+                fig_sc.add_annotation(
+                    x=row[x_col], y=row[y_col], text=label, showarrow=True, arrowhead=1
+                )
+            fig_sc = apply_elegant_theme(
+                fig_sc, theme=st.session_state.get("ui_theme", "dark")
+            )
             st.plotly_chart(fig_sc, use_container_width=True, config=PLOTLY_CONFIG)
             st.caption("rは -1〜+1。0は関連が薄い。CIに0を含まなければ有意。")
             st.caption("散布図の点が右上・左下に伸びれば正、右下・左上なら負。")
@@ -1163,7 +1365,9 @@ elif page == "相関分析":
     with st.expander("相関の読み方"):
         st.write("正の相関：片方が大きいほどもう片方も大きい")
         st.write("負の相関：片方が大きいほどもう片方は小さい")
-        st.write("|r|<0.2は弱い、0.2-0.5はややあり、0.5-0.8は中~強、>0.8は非常に強い（目安）")
+        st.write(
+            "|r|<0.2は弱い、0.2-0.5はややあり、0.5-0.8は中~強、>0.8は非常に強い（目安）"
+        )
 
 # 6) アラート
 elif page == "アラート":
@@ -1171,16 +1375,23 @@ elif page == "アラート":
     st.header("アラート")
     end_m = end_month_selector(st.session_state.data_year, key="end_month_alert")
     s = st.session_state.settings
-    alerts = build_alerts(st.session_state.data_year, end_month=end_m,
-                          yoy_threshold=s["yoy_threshold"],
-                          delta_threshold=s["delta_threshold"],
-                          slope_threshold=s["slope_threshold"])
+    alerts = build_alerts(
+        st.session_state.data_year,
+        end_month=end_m,
+        yoy_threshold=s["yoy_threshold"],
+        delta_threshold=s["delta_threshold"],
+        slope_threshold=s["slope_threshold"],
+    )
     if alerts.empty:
         st.success("閾値に該当するアラートはありません。")
     else:
         st.dataframe(alerts, use_container_width=True)
-        st.download_button("CSVダウンロード", data=alerts.to_csv(index=False).encode("utf-8-sig"),
-                           file_name=f"alerts_{end_m}.csv", mime="text/csv")
+        st.download_button(
+            "CSVダウンロード",
+            data=alerts.to_csv(index=False).encode("utf-8-sig"),
+            file_name=f"alerts_{end_m}.csv",
+            mime="text/csv",
+        )
 
 # 6) 設定
 elif page == "設定":
@@ -1188,14 +1399,37 @@ elif page == "設定":
     s = st.session_state.settings
     c1, c2, c3 = st.columns(3)
     with c1:
-        s["window"] = st.number_input("年計ウィンドウ（月）", min_value=3, max_value=24, value=int(s["window"]), step=1)
-        s["last_n"] = st.number_input("傾き算出の対象点数", min_value=3, max_value=36, value=int(s["last_n"]), step=1)
+        s["window"] = st.number_input(
+            "年計ウィンドウ（月）",
+            min_value=3,
+            max_value=24,
+            value=int(s["window"]),
+            step=1,
+        )
+        s["last_n"] = st.number_input(
+            "傾き算出の対象点数",
+            min_value=3,
+            max_value=36,
+            value=int(s["last_n"]),
+            step=1,
+        )
     with c2:
-        s["yoy_threshold"] = st.number_input("YoY 閾値（<=）", value=float(s["yoy_threshold"]), step=0.01, format="%.2f")
+        s["yoy_threshold"] = st.number_input(
+            "YoY 閾値（<=）", value=float(s["yoy_threshold"]), step=0.01, format="%.2f"
+        )
         s["delta_threshold"] = int_input("Δ 閾値（<= 円）", int(s["delta_threshold"]))
     with c3:
-        s["slope_threshold"] = st.number_input("傾き 閾値（<=）", value=float(s["slope_threshold"]), step=0.1, format="%.2f")
-        s["currency_unit"] = st.selectbox("通貨単位表記", options=["円","千円","百万円"], index=["円","千円","百万円"].index(s["currency_unit"]))
+        s["slope_threshold"] = st.number_input(
+            "傾き 閾値（<=）",
+            value=float(s["slope_threshold"]),
+            step=0.1,
+            format="%.2f",
+        )
+        s["currency_unit"] = st.selectbox(
+            "通貨単位表記",
+            options=["円", "千円", "百万円"],
+            index=["円", "千円", "百万円"].index(s["currency_unit"]),
+        )
 
     st.caption("※ 設定変更後は再計算が必要です。")
     if st.button("年計の再計算を実行", type="primary"):
@@ -1203,7 +1437,9 @@ elif page == "設定":
             st.warning("先にデータを取り込んでください。")
         else:
             long_df = st.session_state.data_monthly
-            year_df = compute_year_rolling(long_df, window=s["window"], policy=s["missing_policy"])
+            year_df = compute_year_rolling(
+                long_df, window=s["window"], policy=s["missing_policy"]
+            )
             year_df = compute_slopes(year_df, last_n=s["last_n"])
             st.session_state.data_year = year_df
             st.success("再計算が完了しました。")
@@ -1220,7 +1456,10 @@ elif page == "保存ビュー":
         if not name:
             st.warning("ビュー名を入力してください。")
         else:
-            st.session_state.saved_views[name] = {"settings": dict(s), "compare": dict(cparams)}
+            st.session_state.saved_views[name] = {
+                "settings": dict(s),
+                "compare": dict(cparams),
+            }
             st.success(f"ビュー「{name}」を保存しました。")
 
     st.subheader("保存済みビュー")
