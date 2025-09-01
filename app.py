@@ -509,7 +509,7 @@ elif page == "ダッシュボード":
     totals = st.session_state.data_year.groupby("month", as_index=False)["year_sum"].sum()
     totals["year_sum_disp"] = totals["year_sum"] / UNIT_MAP[unit]
     fig = px.line(totals, x="month", y="year_sum_disp", title="総合 年計トレンド", markers=True)
-    fig.update_yaxes(title=f"年計({unit})")
+    fig.update_yaxes(title=f"年計({unit})", tickformat="~,d")
     fig.update_layout(height=350, margin=dict(l=10, r=10, t=50, b=10))
     fig = apply_elegant_theme(fig, theme=st.session_state.get("ui_theme", "dark"))
     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
