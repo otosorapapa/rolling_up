@@ -93,7 +93,7 @@ st.markdown(
   --text:#243746;
   --accent:#003a70;
 }
-[data-testid="stAppViewContainer"]{ background:var(--bg); color:var(--text); }
+body, .stApp, [data-testid="stAppViewContainer"]{ background:var(--bg) !important; color:var(--text) !important; }
 [data-testid="stSidebar"]{ background:#003a70; color:#fff; }
 [data-testid="stSidebar"] *{ color:#fff !important; }
 .chart-card{ background:var(--panel); border:1px solid rgba(0,0,0,.08); border-radius:12px; }
@@ -104,7 +104,7 @@ p,li,span,div{ color:var(--text); }
 [data-testid="stMetricValue"]{ color:var(--accent); font-variant-numeric:tabular-nums; font-weight:700; }
 [data-testid="stMetricLabel"]{ color:var(--text); font-weight:600; }
 </style>
-""",
+    """,
     unsafe_allow_html=True,
 )
 
