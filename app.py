@@ -83,19 +83,26 @@ st.set_page_config(
     page_title=APP_TITLE, layout="wide", initial_sidebar_state="expanded"
 )
 
-# High contrast theme
+# McKinsey inspired light theme
 st.markdown(
     """
 <style>
-:root{ --bg:#0F172A; --panel:#111827; --text:#E6F2FF; --accent:#3BB3E6; }
+:root{
+  --bg:#f7f9fc;
+  --panel:#ffffff;
+  --text:#243746;
+  --accent:#003a70;
+}
 [data-testid="stAppViewContainer"]{ background:var(--bg); color:var(--text); }
-[data-testid="stSidebar"]{ background:linear-gradient(180deg,#0B3A6E 0%, #08325D 100%); color:#fff; }
+[data-testid="stSidebar"]{ background:#003a70; color:#fff; }
 [data-testid="stSidebar"] *{ color:#fff !important; }
-.chart-card{ background:var(--panel); border:1px solid rgba(255,255,255,.12); border-radius:12px; }
-.chart-toolbar{ background:linear-gradient(180deg, rgba(59,179,230,.18), rgba(59,179,230,.10));
-  border-bottom:1px solid rgba(59,179,230,.40); }
-h1,h2,h3{ color:var(--text); font-weight:800; letter-spacing:.4px; }
+.chart-card{ background:var(--panel); border:1px solid rgba(0,0,0,.08); border-radius:12px; }
+.chart-toolbar{ background:linear-gradient(180deg, rgba(0,58,112,.05), rgba(0,58,112,.01)); border-bottom:1px solid rgba(0,58,112,.20); }
+h1,h2,h3{ color:var(--accent); font-weight:800; letter-spacing:.4px; }
 p,li,span,div{ color:var(--text); }
+[data-testid="stMetric"]{ background:var(--panel); border:1px solid rgba(0,0,0,.08); border-radius:10px; padding:0.75rem; }
+[data-testid="stMetricValue"]{ color:var(--accent); font-variant-numeric:tabular-nums; font-weight:700; }
+[data-testid="stMetricLabel"]{ color:var(--text); font-weight:600; }
 </style>
 """,
     unsafe_allow_html=True,
@@ -115,31 +122,25 @@ if elegant_on:
         """
     <style>
       :root{
-        --ink:#0B1324;            /* ライト時文字 */
-        --ink-inv:#E9F1FF;        /* ダーク時文字 */
-        --bg:#0F1117;             /* ダーク背景 */
-        --panel:#11161D;          /* カード */
-        --line:rgba(255,255,255,.14);
-        --lineL:rgba(11,19,36,.14);
-        --accent:#2E90FA;         /* 落ち着いた青 */
+        --ink:#243746;
+        --bg:#f7f9fc;
+        --panel:#ffffff;
+        --line:rgba(0,0,0,.08);
+        --accent:#003a70;
       }
-      /* 本文・見出しの格調感（太さ＆字間） */
-      h1,h2,h3{ letter-spacing:.3px; font-weight:800; }
-      p,li,div,span{ font-variant-numeric: tabular-nums; }
-      /* カードの陰影は控えめ、縁はヘアライン */
+      h1,h2,h3{ letter-spacing:.3px; font-weight:800; color:var(--accent); }
+      p,li,div,span{ font-variant-numeric: tabular-nums; color:var(--ink); }
       .chart-card, .stTabs, .stDataFrame, .element-container{
-        border-radius:14px; box-shadow:0 6px 16px rgba(0,0,0,.18);
+        border-radius:14px; box-shadow:0 4px 12px rgba(0,0,0,.08);
         border:1px solid var(--line);
+        background:var(--panel);
       }
-      /* ツールバー：落ち着いた青のグラデ＋細線 */
       .chart-toolbar{
-        background:linear-gradient(180deg, rgba(46,144,250,.14), rgba(46,144,250,.08));
-        border-bottom:1px solid rgba(46,144,250,.35);
+        background:linear-gradient(180deg, rgba(0,58,112,.06), rgba(0,58,112,.02));
+        border-bottom:1px solid rgba(0,58,112,.20);
       }
-      /* ボタン/ラジオは角丸＋細めフォント */
-      .stButton>button, .stRadio label, .stCheckbox label{ border-radius:10px; font-weight:600; }
-      /* サイドバーは濃紺×白で可読性 */
-      [data-testid="stSidebar"]{ background:#0B3A6E; color:#fff; }
+      .stButton>button, .stRadio label, .stCheckbox label{ border-radius:6px; font-weight:600; }
+      [data-testid="stSidebar"]{ background:#003a70; color:#fff; }
       [data-testid="stSidebar"] *{ color:#fff !important; }
     </style>
     """,
@@ -263,13 +264,13 @@ def format_amount(val: Optional[float], unit: str) -> str:
     if val is None or (isinstance(val, float) and math.isnan(val)):
         return "—"
     scale = UNIT_MAP.get(unit, 1)
-    return f"{val/scale:,.0f} {unit}"
+    return f"{format_int(val / scale)} {unit}".strip()
 
 
 def format_int(val: float | int) -> str:
     """Format a number with commas and no decimal part."""
     try:
-        return f"{int(val):,}"
+        return f"{int(round(val)):,}"
     except (TypeError, ValueError):
         return "0"
 
