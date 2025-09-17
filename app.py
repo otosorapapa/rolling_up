@@ -16,15 +16,17 @@ from ai_features import (
     explain_analysis,
     generate_actions,
     answer_question,
+    generate_anomaly_brief,
 )
 
-# McKinsey inspired palette
+# McKinsey inspired pastel palette
 MCKINSEY_PALETTE = [
-    "#003a70",  # deep navy
-    "#8fb8de",  # light blue
-    "#5b6770",  # grey
-    "#b1b3b3",  # light grey
-    "#243746",  # dark slate
+    "#123a5f",  # deep navy
+    "#2d6f8e",  # steel blue
+    "#4f9ab8",  # aqua accent
+    "#71b7d4",  # sky blue
+    "#a9d0e7",  # frost blue
+    "#dbe8f5",  # airy pastel
 ]
 # Apply palette across figures
 px.defaults.color_discrete_sequence = MCKINSEY_PALETTE
@@ -73,6 +75,11 @@ def _ai_answer(question: str, context: str) -> str:
     return answer_question(question, context)
 
 
+@st.cache_data(ttl=600)
+def _ai_anomaly_report(df: pd.DataFrame) -> str:
+    return generate_anomaly_brief(df)
+
+
 from services import (
     parse_uploaded_table,
     fill_missing_months,
@@ -91,6 +98,7 @@ from services import (
     trend_last6,
     slopes_snapshot,
     shape_flags,
+    detect_linear_anomalies,
 )
 from core.chart_card import toolbar_sku_detail, build_chart_card
 from core.plot_utils import apply_elegant_theme
@@ -105,46 +113,47 @@ st.markdown(
     """
 <style>
 :root{
-  --bg:#f3f6fb;
+  --bg:#edf3f9;
   --panel:#ffffff;
-  --text:#243746;
-  --accent:#003a70;
-  --accent-soft:#0f4c81;
-  --muted:#5b6770;
+  --text:#1f2a36;
+  --accent:#123a5f;
+  --accent-soft:#2d6f8e;
+  --accent-light:#71b7d4;
+  --muted:#4f6274;
 }
 body, .stApp, [data-testid="stAppViewContainer"]{ background:var(--bg) !important; color:var(--text) !important; }
-[data-testid="stSidebar"]{ background:linear-gradient(180deg,#012a4a 0%,#003a70 100%); color:#fff; padding-top:1rem; }
+[data-testid="stSidebar"]{ background:linear-gradient(180deg,#0b2f4c 0%,#123a5f 100%); color:#fff; padding-top:1rem; }
 [data-testid="stSidebar"] *{ color:#fff !important; }
-[data-testid="stSidebar"] .stButton>button{ background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.2); color:#fff; }
+[data-testid="stSidebar"] .stButton>button{ background:rgba(255,255,255,0.14); border:1px solid rgba(255,255,255,0.25); color:#fff; }
 h1,h2,h3{ color:var(--accent); font-weight:800; letter-spacing:.4px; }
 p,li,span,div{ color:var(--text); }
-[data-testid="stMetric"]{ background:var(--panel); border:1px solid rgba(0,0,0,0.06); border-radius:12px; padding:0.75rem 0.85rem; box-shadow:0 4px 12px rgba(15,31,53,0.05); }
+[data-testid="stMetric"]{ background:var(--panel); border:1px solid rgba(11,41,70,0.08); border-radius:12px; padding:0.75rem 0.9rem; box-shadow:0 6px 18px rgba(17,49,82,0.08); }
 [data-testid="stMetricValue"]{ color:var(--accent); font-variant-numeric:tabular-nums; font-weight:700; }
 [data-testid="stMetricLabel"]{ color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.08em; }
-.mck-sidebar-summary{ background:rgba(255,255,255,0.08); border-radius:12px; padding:0.85rem; margin-bottom:1.2rem; font-size:0.88rem; line-height:1.5; }
+.mck-sidebar-summary{ background:rgba(255,255,255,0.10); border-radius:12px; padding:0.85rem; margin-bottom:1.2rem; font-size:0.88rem; line-height:1.5; }
 .mck-sidebar-summary strong{ color:#fff; }
-.mck-hero{ background:linear-gradient(135deg, rgba(0,58,112,0.92) 0%, rgba(15,76,129,0.85) 100%); color:#fff; padding:1.8rem 2rem; border-radius:18px; margin-bottom:1.2rem; box-shadow:0 18px 40px rgba(0,36,70,0.25); position:relative; overflow:hidden; }
-.mck-hero::after{ content:""; position:absolute; inset:auto -20% -35% auto; width:220px; height:220px; background:rgba(255,255,255,0.08); border-radius:50%; }
+.mck-hero{ background:linear-gradient(135deg, rgba(18,58,95,0.94) 0%, rgba(47,111,142,0.86) 100%); color:#fff; padding:1.8rem 2rem; border-radius:18px; margin-bottom:1.2rem; box-shadow:0 18px 38px rgba(11,44,74,0.25); position:relative; overflow:hidden; }
+.mck-hero::after{ content:""; position:absolute; inset:auto -18% -32% auto; width:220px; height:220px; background:rgba(255,255,255,0.12); border-radius:50%; }
 .mck-hero h1{ color:#fff; margin-bottom:0.5rem; font-size:1.9rem; }
 .mck-hero p{ color:rgba(255,255,255,0.82); font-size:1rem; margin-bottom:0; }
-.mck-hero__eyebrow{ text-transform:uppercase; letter-spacing:.16em; font-size:0.75rem; font-weight:600; color:rgba(255,255,255,0.8); margin-bottom:0.6rem; display:inline-flex; align-items:center; gap:0.5rem; }
+.mck-hero__eyebrow{ text-transform:uppercase; letter-spacing:.16em; font-size:0.75rem; font-weight:600; color:rgba(255,255,255,0.82); margin-bottom:0.6rem; display:inline-flex; align-items:center; gap:0.5rem; }
 .mck-hero__eyebrow:before{ content:"◦"; font-size:0.9rem; }
 .mck-section-header{ display:flex; align-items:flex-start; gap:0.85rem; margin:0.8rem 0 0.6rem; }
 .mck-section-header h2{ margin:0; font-size:1.35rem; line-height:1.2; }
 .mck-section-subtitle{ margin:0.25rem 0 0; font-size:0.92rem; color:var(--muted); }
-.mck-section-icon{ width:42px; height:42px; display:inline-flex; align-items:center; justify-content:center; border-radius:50%; background:rgba(0,58,112,0.1); color:var(--accent); font-size:1.2rem; flex-shrink:0; margin-top:0.1rem; }
-.mck-ai-answer{ background:var(--panel); border-radius:12px; border:1px solid rgba(0,0,0,0.08); padding:0.75rem 0.9rem; box-shadow:0 12px 24px rgba(15,31,53,0.08); margin-top:0.75rem; }
+.mck-section-icon{ width:42px; height:42px; display:inline-flex; align-items:center; justify-content:center; border-radius:50%;background:rgba(18,58,95,0.12); color:var(--accent); font-size:1.2rem; flex-shrink:0; margin-top:0.1rem; }
+.mck-ai-answer{ background:var(--panel); border-radius:12px; border:1px solid rgba(11,41,70,0.08); padding:0.75rem 0.9rem; box-shadow:0 12px 26px rgba(11,44,74,0.10); margin-top:0.75rem; }
 .mck-ai-answer strong{ color:var(--accent); }
 .stTabs [data-baseweb="tab-list"]{ gap:0.6rem; }
-.stTabs [data-baseweb="tab"]{ background:var(--panel); padding:0.6rem 1rem; border-radius:999px; border:1px solid rgba(0,58,112,0.18); color:var(--muted); font-weight:600; }
-.stTabs [data-baseweb="tab"]:hover{ border-color:rgba(0,58,112,0.4); color:var(--accent); }
+.stTabs [data-baseweb="tab"]{ background:var(--panel); padding:0.6rem 1rem; border-radius:999px; border:1px solid rgba(18,58,95,0.18); color:var(--muted); font-weight:600; }
+.stTabs [data-baseweb="tab"]:hover{ border-color:rgba(47,111,142,0.42); color:var(--accent); }
 .stTabs [data-baseweb="tab"]:focus{ outline:none; }
-.stTabs [aria-selected="true"]{ background:#003a70; color:#fff; border-color:#003a70; }
+.stTabs [aria-selected="true"]{ background:#123a5f; color:#fff; border-color:#123a5f; }
 .stDataFrame{ border-radius:14px !important; }
-.stButton>button{ border-radius:999px; padding:0.45rem 1.2rem; font-weight:600; border:1px solid rgba(0,58,112,0.35); color:var(--accent); background:rgba(0,58,112,0.05); }
-.stButton>button:hover{ background:rgba(0,58,112,0.12); border-color:#003a70; color:#003a70; }
-.chart-card{ background:var(--panel); border:1px solid rgba(0,0,0,0.08); border-radius:14px; box-shadow:0 12px 24px rgba(15,31,53,0.06); }
-.chart-toolbar{ background:linear-gradient(180deg, rgba(0,58,112,0.05), rgba(0,58,112,0.01)); border-bottom:1px solid rgba(0,58,112,0.2); }
+.stButton>button{ border-radius:999px; padding:0.45rem 1.2rem; font-weight:600; border:1px solid rgba(18,58,95,0.35); color:var(--accent); background:rgba(18,58,95,0.06); }
+.stButton>button:hover{ background:rgba(18,58,95,0.12); border-color:#2d6f8e; color:#123a5f; }
+.chart-card{ background:var(--panel); border:1px solid rgba(11,41,70,0.08); border-radius:14px; box-shadow:0 12px 26px rgba(11,44,74,0.06); }
+.chart-toolbar{ background:linear-gradient(180deg, rgba(18,58,95,0.04), rgba(18,58,95,0.01)); border-bottom:1px solid rgba(18,58,95,0.18); }
 </style>
     """,
     unsafe_allow_html=True,
@@ -164,12 +173,12 @@ if elegant_on:
         """
     <style>
       :root{
-        --ink:#1b2733;
-        --bg:#edf1f6;
+        --ink:#1c2733;
+        --bg:#eef2f8;
         --panel:#ffffff;
-        --line:rgba(0,0,0,.06);
-        --accent:#003a70;
-        --muted:#4a5963;
+        --line:rgba(18,58,95,.12);
+        --accent:#123a5f;
+        --muted:#526274;
       }
       body, .stApp, [data-testid="stAppViewContainer"]{ background:var(--bg) !important; color:var(--ink) !important; }
       h1,h2,h3{ letter-spacing:.3px; font-weight:800; color:var(--accent); }
@@ -179,11 +188,13 @@ if elegant_on:
         border:1px solid var(--line); background:var(--panel);
       }
       .chart-toolbar{
-        background:linear-gradient(180deg, rgba(0,58,112,.08), rgba(0,58,112,.02));
-        border-bottom:1px solid rgba(0,58,112,.18);
+        background:linear-gradient(180deg, rgba(18,58,95,.08), rgba(18,58,95,.02));
+        border-bottom:1px solid rgba(18,58,95,.18);
       }
-      .stButton>button, .stRadio label, .stCheckbox label, .stSelectbox label{ border-radius:999px; font-weight:600; }
-      [data-testid="stSidebar"]{ background:linear-gradient(180deg,#012a4a 0%,#003a70 100%); color:#fff; }
+      .stButton>button, .stRadio label, .stCheckbox label, .stSelectbox label{ border-radius:999px; font-weight:600; color:var(--accent); }
+      .stButton>button{ border:1px solid rgba(18,58,95,0.35); background:rgba(18,58,95,0.06); }
+      .stButton>button:hover{ background:rgba(18,58,95,0.12); border-color:#2d6f8e; color:#123a5f; }
+      [data-testid="stSidebar"]{ background:linear-gradient(180deg,#0b2f4c 0%,#123a5f 100%); color:#fff; }
       [data-testid="stSidebar"] *{ color:#fff !important; }
     </style>
     """,
@@ -628,6 +639,7 @@ page = st.sidebar.radio(
         "ランキング",
         "比較ビュー",
         "SKU詳細",
+        "異常検知",
         "相関分析",
         "データ取込",
         "アラート",
@@ -1438,12 +1450,25 @@ elif page == "SKU詳細":
         help="要約・コメント・自動説明を表示（オンデマンド計算）",
     )
 
+    chart_rendered = False
+    modal_codes: List[str] | None = None
+    modal_is_multi = False
+
     if mode == "単品":
         prod_label = st.selectbox(
             "SKU選択", options=prods["product_code"] + " | " + prods["product_name"]
         )
         code = prod_label.split(" | ")[0]
-        build_chart_card(df_year, selected_codes=[code], multi_mode=False, tb=tb)
+        build_chart_card(
+            df_year,
+            selected_codes=[code],
+            multi_mode=False,
+            tb=tb,
+            height=600,
+        )
+        chart_rendered = True
+        modal_codes = [code]
+        modal_is_multi = False
 
         g_y = df_year[df_year["product_code"] == code].sort_values("month")
         row = g_y[g_y["month"] == end_m]
@@ -1508,7 +1533,16 @@ elif page == "SKU詳細":
         sel = st.multiselect("SKU選択（最大30件）", options=opts, max_selections=30)
         codes = [s.split(" | ")[0] for s in sel]
         if codes or (tb.get("slope_conf") and tb["slope_conf"].get("quick") != "なし"):
-            build_chart_card(df_year, selected_codes=codes, multi_mode=True, tb=tb)
+            build_chart_card(
+                df_year,
+                selected_codes=codes,
+                multi_mode=True,
+                tb=tb,
+                height=600,
+            )
+            chart_rendered = True
+            modal_codes = codes
+            modal_is_multi = True
             snap = latest_yearsum_snapshot(df_year, end_m)
             if codes:
                 snap = snap[snap["product_code"].isin(codes)]
@@ -1527,7 +1561,220 @@ elif page == "SKU詳細":
         else:
             st.info("SKUを選択してください。")
 
-# 5) 相関分析
+    if tb.get("expand_mode") and chart_rendered:
+        with st.modal("グラフ拡大モード", key="sku_expand_modal"):
+            st.caption("操作パネルは拡大表示中も利用できます。")
+            tb_modal = toolbar_sku_detail(
+                multi_mode=modal_is_multi,
+                key_prefix="sku_modal",
+                include_expand_toggle=False,
+            )
+            build_chart_card(
+                df_year,
+                selected_codes=modal_codes,
+                multi_mode=modal_is_multi,
+                tb=tb_modal,
+                height=tb_modal.get("chart_height", 760),
+            )
+            if st.button("閉じる", key="close_expand_modal"):
+                st.session_state.setdefault("ui", {})["expand_mode"] = False
+                st.session_state["sku_expand_mode"] = False
+                st.experimental_rerun()
+
+# 5) 異常検知
+elif page == "異常検知":
+    require_data()
+    section_header("異常検知", "回帰残差ベースで異常ポイントを抽出します。", icon="🚨")
+    year_df = st.session_state.data_year.copy()
+    unit = st.session_state.settings.get("currency_unit", "円")
+    scale = UNIT_MAP.get(unit, 1)
+
+    col_a, col_b = st.columns([1.1, 1.1])
+    with col_a:
+        window = st.slider("学習窓幅（月）", 6, 18, st.session_state.get("anomaly_window", 12), key="anomaly_window")
+    with col_b:
+        score_method = st.radio("スコア基準", ["zスコア", "MADスコア"], horizontal=True, key="anomaly_score_method")
+
+    if score_method == "zスコア":
+        thr_key = "anomaly_thr_z"
+        threshold = st.slider(
+            "異常判定しきい値",
+            2.0,
+            5.0,
+            value=float(st.session_state.get(thr_key, 3.0)),
+            step=0.1,
+            key=thr_key,
+        )
+        robust = False
+    else:
+        thr_key = "anomaly_thr_mad"
+        threshold = st.slider(
+            "異常判定しきい値",
+            2.5,
+            6.0,
+            value=float(st.session_state.get(thr_key, 3.5)),
+            step=0.1,
+            key=thr_key,
+        )
+        robust = True
+
+    prod_opts = (
+        year_df[["product_code", "product_name"]]
+        .drop_duplicates()
+        .sort_values("product_code")
+    )
+    prod_opts["label"] = (
+        prod_opts["product_code"]
+        + " | "
+        + prod_opts["product_name"].fillna(prod_opts["product_code"])
+    )
+    selected_labels = st.multiselect(
+        "対象SKU（未選択=全件）",
+        options=prod_opts["label"].tolist(),
+        key="anomaly_filter_codes",
+    )
+    selected_codes = [lab.split(" | ")[0] for lab in selected_labels]
+
+    records: List[pd.DataFrame] = []
+    for code, g in year_df.groupby("product_code"):
+        if selected_codes and code not in selected_codes:
+            continue
+        s = g.sort_values("month").set_index("month")["year_sum"]
+        res = detect_linear_anomalies(
+            s,
+            window=int(window),
+            threshold=float(threshold),
+            robust=robust,
+        )
+        if res.empty:
+            continue
+        res["product_code"] = code
+        res["product_name"] = g["product_name"].iloc[0]
+        res = res.merge(
+            g[["month", "year_sum", "yoy", "delta"]],
+            on="month",
+            how="left",
+        )
+        res["score_abs"] = res["score"].abs()
+        records.append(res)
+
+    if not records:
+        st.success("異常値は検出されませんでした。窓幅やしきい値を調整してください。")
+    else:
+        anomalies = pd.concat(records, ignore_index=True)
+        anomalies = anomalies.sort_values("score_abs", ascending=False)
+        anomalies["year_sum_disp"] = anomalies["year_sum"] / scale
+        anomalies["delta_disp"] = anomalies["delta"] / scale
+        total_count = len(anomalies)
+        sku_count = anomalies["product_code"].nunique()
+        pos_cnt = int((anomalies["score"] > 0).sum())
+        neg_cnt = int((anomalies["score"] < 0).sum())
+
+        m1, m2, m3 = st.columns(3)
+        m1.metric("異常件数", f"{total_count:,}")
+        m2.metric("対象SKU", f"{sku_count:,}")
+        m3.metric("上振れ/下振れ", f"{pos_cnt:,} / {neg_cnt:,}")
+
+        max_top = min(200, total_count)
+        top_default = min(50, max_top)
+        top_n = int(
+            st.slider(
+                "表示件数",
+                min_value=1,
+                max_value=max_top,
+                value=top_default,
+                key="anomaly_view_top",
+            )
+        )
+        view = anomalies.head(top_n).copy()
+        view_table = view[
+            [
+                "product_code",
+                "product_name",
+                "month",
+                "year_sum_disp",
+                "yoy",
+                "delta_disp",
+                "score",
+            ]
+        ].rename(
+            columns={
+                "product_code": "商品コード",
+                "product_name": "商品名",
+                "month": "月",
+                "year_sum_disp": f"年計({unit})",
+                "yoy": "YoY",
+                "delta_disp": f"Δ({unit})",
+                "score": "スコア",
+            }
+        )
+        st.dataframe(view_table, use_container_width=True)
+        st.caption("値は指定した単位換算、スコアはローカル回帰残差の標準化値です。")
+        st.download_button(
+            "CSVダウンロード",
+            data=view_table.to_csv(index=False).encode("utf-8-sig"),
+            file_name=f"anomalies_{score_method}_{threshold:.1f}.csv",
+            mime="text/csv",
+        )
+
+        if st.toggle("AI異常サマリー", value=False, key="anomaly_ai_toggle") and not view.empty:
+            ai_df = view[["product_name", "month", "score", "year_sum", "yoy", "delta"]].fillna(0)
+            st.info(_ai_anomaly_report(ai_df))
+
+        option_labels = [
+            f"{row['product_code']}｜{row['product_name'] or row['product_code']}｜{row['month']}"
+            for _, row in view.iterrows()
+        ]
+        if option_labels:
+            sel_label = st.selectbox("詳細チャート", options=option_labels, key="anomaly_detail_select")
+            code_sel, name_sel, month_sel = sel_label.split("｜")
+            g = year_df[year_df["product_code"] == code_sel].sort_values("month").copy()
+            g["year_sum_disp"] = g["year_sum"] / scale
+            fig_anom = px.line(
+                g,
+                x="month",
+                y="year_sum_disp",
+                markers=True,
+                title=f"{name_sel} 年計推移",
+            )
+            fig_anom.update_yaxes(title_text=f"年計（{unit}）", tickformat="~,d")
+            fig_anom.update_traces(hovertemplate="月：%{x|%Y-%m}<br>年計：%{y:,.0f} {unit}<extra></extra>")
+
+            code_anoms = anomalies[anomalies["product_code"] == code_sel]
+            if not code_anoms.empty:
+                fig_anom.add_scatter(
+                    x=code_anoms["month"],
+                    y=code_anoms["year_sum"] / scale,
+                    mode="markers",
+                    name="異常値",
+                    marker=dict(color="#d94c53", size=10, symbol="triangle-up"),
+                    hovertemplate="異常月：%{x|%Y-%m}<br>年計：%{y:,.0f} {unit}<br>スコア：%{customdata[0]:.2f}<extra></extra>",
+                    customdata=np.stack([code_anoms["score"]], axis=-1),
+                    showlegend=False,
+                )
+            target = code_anoms[code_anoms["month"] == month_sel]
+            if not target.empty:
+                tgt = target.iloc[0]
+                fig_anom.add_annotation(
+                    x=month_sel,
+                    y=tgt["year_sum"] / scale,
+                    text=f"スコア {tgt['score']:.2f}",
+                    showarrow=True,
+                    arrowcolor="#d94c53",
+                    arrowhead=2,
+                )
+                yoy_txt = (
+                    f"{tgt['yoy'] * 100:.1f}%" if tgt.get("yoy") is not None and not pd.isna(tgt.get("yoy")) else "—"
+                )
+                delta_txt = format_amount(tgt.get("delta"), unit)
+                st.info(
+                    f"{name_sel} {month_sel} の年計は {tgt['year_sum_disp']:.0f} {unit}、YoY {yoy_txt}、Δ {delta_txt}。"
+                    f" 異常スコアは {tgt['score']:.2f} です。"
+                )
+            fig_anom = apply_elegant_theme(fig_anom, theme=st.session_state.get("ui_theme", "dark"))
+            st.plotly_chart(fig_anom, use_container_width=True, config=PLOTLY_CONFIG)
+
+# 6) 相関分析
 elif page == "相関分析":
     require_data()
     section_header("相関分析", "指標間の関係性からインサイトを発掘。", icon="🧭")
