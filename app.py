@@ -375,6 +375,46 @@ def format_int(val: float | int) -> str:
         return "0"
 
 
+def nice_slider_step(max_value: int, target_steps: int = 40) -> int:
+    """Return an intuitive step size so sliders move in round increments."""
+    if max_value <= 0:
+        return 1
+
+    raw_step = max_value / target_steps
+    if raw_step <= 1:
+        return 1
+
+    exponent = math.floor(math.log10(raw_step)) if raw_step > 0 else 0
+    base = raw_step / (10 ** exponent) if raw_step > 0 else 1
+
+    for nice in (1, 2, 5, 10):
+        if base <= nice:
+            step = nice * (10 ** exponent)
+            return int(step) if step >= 1 else 1
+
+    return int(10 ** (exponent + 1))
+
+
+def choose_amount_slider_unit(max_amount: int) -> tuple[int, str]:
+    """Choose a unit so the slider operates in easy-to-understand scales."""
+    units = [
+        (1, "円"),
+        (1_000, "千円"),
+        (10_000, "万円"),
+        (1_000_000, "百万円"),
+        (100_000_000, "億円"),
+    ]
+
+    if max_amount <= 0:
+        return units[0]
+
+    for scale, label in units:
+        if max_amount / scale <= 300:
+            return scale, label
+
+    return units[-1]
+
+
 def int_input(label: str, value: int) -> int:
     """Text input for integer values displayed with thousands separators."""
     text = st.text_input(label, format_int(value))
@@ -1063,20 +1103,37 @@ elif page == "比較ビュー":
     with c7:
         band_params = params.get("band_params", {})
         if band_mode == "金額指定" and not snapshot.empty:
-            step = max(max_amount // 100, 1)
-            opts = list(range(0, max_amount + 1, step))
-            if opts[-1] != max_amount:
-                opts.append(max_amount)
-            low, high = st.select_slider(
-                "金額レンジ",
-                options=opts,
-                value=(
-                    band_params.get("low_amount", low0),
-                    band_params.get("high_amount", high0),
-                ),
-                format_func=format_int,
+            unit_scale, unit_label = choose_amount_slider_unit(max_amount)
+            slider_max = int(
+                math.ceil(max(max_amount, band_params.get("high_amount", high0)) / unit_scale)
             )
-            band_params = {"low_amount": int(low), "high_amount": int(high)}
+            slider_max = max(slider_max, 1)
+
+            default_low = int(round(band_params.get("low_amount", low0) / unit_scale))
+            default_high = int(round(band_params.get("high_amount", high0) / unit_scale))
+            default_low = max(0, min(default_low, slider_max))
+            default_high = max(default_low, min(default_high, slider_max))
+
+            step = nice_slider_step(slider_max)
+
+            low_scaled, high_scaled = st.slider(
+                f"金額レンジ（{unit_label}単位）",
+                min_value=0,
+                max_value=slider_max,
+                value=(default_low, default_high),
+                step=step,
+            )
+
+            low = int(low_scaled * unit_scale)
+            high = int(high_scaled * unit_scale)
+            high = min(high, max_amount)
+            low = min(low, high)
+
+            st.caption(
+                f"選択中: {format_int(low)}円 〜 {format_int(high)}円"
+            )
+
+            band_params = {"low_amount": low, "high_amount": high}
         elif band_mode == "商品指定(2)" and not snapshot.empty:
             opts = (
                 snapshot["product_code"].fillna("")
