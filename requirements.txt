@@ -8,6 +8,12 @@ XlsxWriter>=3.1
 reportlab>=4.0
 pyarrow
 duckdb
+pmdarima
+sqlmodel
+duckdb-engine
+pyyaml
+openai
+requests
 statsmodels
 python-pptx
 scipy
