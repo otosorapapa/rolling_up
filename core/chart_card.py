@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import plotly.express as px
+from plotly.colors import hex_to_rgb, sample_colorscale
 import streamlit as st
 
 from services import (
@@ -16,6 +17,66 @@ from core.plot_utils import add_latest_labels_no_overlap, apply_elegant_theme
 
 UNIT_SCALE = {"円": 1, "千円": 1_000, "百万円": 1_000_000}
 MAX_DISPLAY_PRODUCTS = 60
+TREND_POS_THRESHOLD = 0.05
+TREND_NEG_THRESHOLD = -0.05
+
+
+def _sample_scale_colors(scale: list[str], count: int, *, low: float = 0.1, high: float = 0.9) -> list[str]:
+    """Sample ``count`` colors from a Plotly color scale with optional padding."""
+
+    if count <= 0:
+        return []
+    low = max(0.0, min(low, 1.0))
+    high = max(low, min(high, 1.0))
+    if count == 1:
+        midpoint = (low + high) / 2 if high > low else 0.5
+        return sample_colorscale(scale, [midpoint])
+    if high == low:
+        step = 1.0 / max(count - 1, 1)
+        positions = [i * step for i in range(count)]
+    else:
+        step = (high - low) / max(count - 1, 1)
+        positions = [low + step * i for i in range(count)]
+    return sample_colorscale(scale, positions)
+
+
+def _build_trend_color_map(latest: pd.DataFrame) -> dict[str, str]:
+    """Return a color map keyed by ``display_name`` based on latest YoY values."""
+
+    if latest.empty or "yoy" not in latest.columns:
+        base = px.colors.qualitative.Safe
+        return {name: base[i % len(base)] for i, name in enumerate(latest.index)}
+
+    yoy = latest["yoy"]
+    pos_names = (
+        yoy[yoy >= TREND_POS_THRESHOLD]
+        .sort_values(ascending=False)
+        .index.tolist()
+    )
+    neg_names = yoy[yoy <= TREND_NEG_THRESHOLD].sort_values().index.tolist()
+    taken = set(pos_names) | set(neg_names)
+    neutral_names = [name for name in yoy.index if name not in taken]
+
+    color_map: dict[str, str] = {}
+    color_map.update(
+        zip(
+            pos_names,
+            _sample_scale_colors(px.colors.sequential.Teal, len(pos_names), low=0.1, high=0.85),
+        )
+    )
+    color_map.update(
+        zip(
+            neg_names,
+            _sample_scale_colors(px.colors.sequential.OrRd, len(neg_names), low=0.0, high=0.85),
+        )
+    )
+    color_map.update(
+        zip(
+            neutral_names,
+            _sample_scale_colors(px.colors.sequential.Purples, len(neutral_names), low=0.1, high=0.9),
+        )
+    )
+    return color_map
 
 
 def format_int(val: float | int) -> str:
@@ -403,7 +464,11 @@ def build_chart_card(
         dfp = limit_products(dfp)
 
     scale = UNIT_SCALE[tb["unit"]]
-    dfp["year_sum_disp"] = dfp["year_sum"] / scale
+    dfp = dfp.sort_values("month").copy()
+    if "yoy" not in dfp.columns:
+        dfp["yoy"] = np.nan
+    if "delta" not in dfp.columns:
+        dfp["delta"] = np.nan
 
     if multi_mode and tb.get("slope_conf"):
         sc = tb["slope_conf"]
@@ -454,32 +519,101 @@ def build_chart_card(
         else:
             dfp = dfp[dfp["product_code"].isin(codes_by_slope)]
 
-    fig = px.line(
-        dfp,
+    dfp["year_sum_disp"] = dfp["year_sum"] / scale
+    dfp["yoy_display"] = dfp["yoy"].apply(
+        lambda v: "—" if pd.isna(v) else f"{v * 100:+.1f}%"
+    )
+    dfp["delta_display"] = dfp["delta"].apply(
+        lambda v: "—" if pd.isna(v) else f"{v / scale:+,.0f} {tb['unit']}"
+    )
+    latest_snapshot = (
+        dfp.groupby("display_name", as_index=False)
+        .tail(1)
+        .set_index("display_name")
+    )
+    latest_yoy = (
+        dfp.groupby("display_name")["yoy"].transform("last")
+        if "yoy" in dfp.columns
+        else pd.Series(np.nan, index=dfp.index)
+    )
+    dfp["label_with_yoy"] = dfp["display_name"] + latest_yoy.apply(
+        lambda v: "" if pd.isna(v) else f"（YoY {v * 100:+.1f}%）"
+    )
+    color_map = _build_trend_color_map(latest_snapshot)
+
+    line_kwargs = dict(
         x="month",
         y="year_sum_disp",
         color="display_name",
-        custom_data=["display_name"],
+        custom_data=["display_name", "yoy_display", "delta_display"],
+    )
+    if color_map:
+        line_kwargs["color_discrete_map"] = color_map
+    fig = px.line(dfp, **line_kwargs)
+    hovertemplate = (
+        "<b>%{customdata[0]}</b><br>"
+        "月：%{x|%Y-%m}<br>"
+        f"年計：%{{y:,.0f}} {tb['unit']}<br>"
+        "前年同月比：%{customdata[1]}<br>"
+        "前月差：%{customdata[2]}<extra></extra>"
     )
     fig.update_yaxes(title_text=f"売上 年計（{tb['unit']}）", tickformat="~,d")
-    fig.update_traces(
-        mode="lines+markers",
-        hovertemplate="<b>%{customdata[0]}</b><br>月：%{x|%Y-%m}<br>年計：%{y:,.0f} {tb['unit']}<extra></extra>",
-    )
+    fig.update_traces(mode="lines+markers", hovertemplate=hovertemplate)
     if band_range:
         low, high = band_range
         fig.add_hrect(
             y0=low / scale,
             y1=high / scale,
-            fillcolor="green",
-            opacity=0.12,
-            line_width=0,
+            fillcolor="rgba(30, 167, 140, 0.18)",
+            opacity=1.0,
+            line=dict(color="rgba(30, 167, 140, 0.35)", width=1),
         )
 
+    month_count = dfp["month"].nunique()
+    if month_count <= 18:
+        dtick = "M1"
+    elif month_count <= 36:
+        dtick = "M3"
+    else:
+        dtick = "M6"
+    fig.update_xaxes(tickformat="%Y-%m", dtick=dtick)
     fig.update_layout(
         dragmode={"パン": "pan", "ズーム": "zoom", "選択": "select"}[tb["op_mode"]],
         hovermode="closest" if tb["hover_mode"] == "個別" else "x unified",
+        legend=dict(
+            orientation="h",
+            title_text=None,
+            yanchor="bottom",
+            y=1.02,
+            xanchor="left",
+            x=0,
+            bgcolor="rgba(0,0,0,0)",
+            itemclick="toggleothers",
+            itemdoubleclick="toggle",
+        ),
+        margin=dict(l=72, r=40, t=60, b=80),
     )
+    latest_yoy_map = (
+        latest_snapshot["yoy"].to_dict() if "yoy" in latest_snapshot.columns else {}
+    )
+    for tr in fig.data:
+        if "lines" not in getattr(tr, "mode", ""):
+            continue
+        yoy_val = latest_yoy_map.get(tr.name)
+        if yoy_val is None or pd.isna(yoy_val):
+            tr.line.width = 2.3
+        elif yoy_val >= TREND_POS_THRESHOLD:
+            tr.line.width = 3.0
+        elif yoy_val <= TREND_NEG_THRESHOLD:
+            tr.line.width = 2.6
+            tr.line.dash = "dot"
+        else:
+            tr.line.width = 2.4
+    line_colors = {
+        tr.name: tr.line.color
+        for tr in fig.data
+        if "lines" in getattr(tr, "mode", "")
+    }
 
     if tb.get("forecast_method") and tb["forecast_method"] != "なし":
         method = tb["forecast_method"]
@@ -513,14 +647,22 @@ def build_chart_card(
             future_idx = pd.period_range(
                 last_t.to_period("M"), periods=horizon, freq="M"
             ).to_timestamp() + pd.offsets.MonthBegin(1)
+            base_color = line_colors.get(name)
+            line_style = dict(dash="dash")
+            if base_color:
+                line_style["color"] = base_color
             fig.add_scatter(
                 x=future_idx,
                 y=f / scale,
                 mode="lines",
                 name=f"{name}予測",
-                line=dict(dash="dash"),
+                line=line_style,
                 showlegend=False,
             )
+            fill_color = "rgba(113,178,255,.18)"
+            if base_color and isinstance(base_color, str) and base_color.startswith("#"):
+                r, g, b = hex_to_rgb(base_color)
+                fill_color = f"rgba({r},{g},{b},0.12)"
             fig.add_scatter(
                 x=future_idx,
                 y=hi / scale,
@@ -533,8 +675,8 @@ def build_chart_card(
                 y=lo / scale,
                 mode="lines",
                 fill="tonexty",
-                line=dict(width=0),
-                fillcolor="rgba(113,178,255,.18)",
+                line=dict(width=0, color=base_color),
+                fillcolor=fill_color,
                 showlegend=False,
             )
 
@@ -591,17 +733,24 @@ def build_chart_card(
             legendgroup=name,
             showlegend=False,
             marker=dict(
-                size=6, symbol="circle", line=dict(color=halo, width=2), opacity=0.95
+                size=6,
+                symbol="circle",
+                line=dict(color=halo, width=1.6),
+                opacity=0.95,
+                color=line_colors.get(name, color_map.get(name)),
             ),
-            customdata=np.stack([d["display_name"]], axis=-1),
-            hovertemplate="<b>%{customdata[0]}</b><br>月：%{x|%Y-%m}<br>年計：%{y:,.0f} {tb['unit']}<extra></extra>",
+            customdata=np.stack(
+                [d["display_name"], d["yoy_display"], d["delta_display"]],
+                axis=-1,
+            ),
+            hovertemplate=hovertemplate,
         )
 
     if tb["enable_avoid"]:
         add_latest_labels_no_overlap(
             fig,
             dfp,
-            label_col="display_name",
+            label_col="label_with_yoy",
             x_col="month",
             y_col="year_sum_disp",
             max_labels=tb["max_labels"],
@@ -624,4 +773,12 @@ def build_chart_card(
         height=plot_height,
         config=base_config,
     )
+    if (
+        color_map
+        and "yoy" in latest_snapshot.columns
+        and latest_snapshot["yoy"].notna().any()
+    ):
+        st.caption(
+            "色分けルール：青緑=前年同月比+5%以上、紫=±5%以内、サーモン=前年同月比-5%以下。"
+        )
     return fig
