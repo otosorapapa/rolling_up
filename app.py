@@ -122,8 +122,19 @@ st.markdown(
   --muted:#4f6274;
 }
 body, .stApp, [data-testid="stAppViewContainer"]{ background:var(--bg) !important; color:var(--text) !important; }
-[data-testid="stSidebar"]{ background:linear-gradient(180deg,#0b2f4c 0%,#123a5f 100%); color:#fff; padding-top:1rem; }
-[data-testid="stSidebar"] *{ color:#fff !important; }
+[data-testid="stSidebar"]{ background:linear-gradient(180deg,#0b2f4c 0%,#123a5f 100%); color:#f5f8ff; padding-top:1rem; }
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] li,
+[data-testid="stSidebar"] span,
+[data-testid="stSidebar"] div{ color:inherit !important; }
+[data-testid="stSidebar"] .sidebar-nav [data-testid="stRadio"] label p{ color:#0b2f4c !important; font-weight:600; letter-spacing:.02em; }
+[data-testid="stSidebar"] .sidebar-nav [data-testid="stRadio"]>div{ gap:0.35rem; }
+[data-testid="stSidebar"] .sidebar-nav [data-testid="stRadio"] label{ background:#f4f7fb; border-radius:12px; padding:0.5rem 0.75rem; border:1px solid rgba(10,48,78,0.12); box-shadow:0 2px 6px rgba(5,22,35,0.15); }
+[data-testid="stSidebar"] .sidebar-nav [data-testid="stRadio"] label:hover{ border-color:#2d6f8e; box-shadow:0 4px 12px rgba(8,34,53,0.22); }
+[data-testid="stSidebar"] .sidebar-nav [data-testid="stRadio"] label:has(input[checked]){ background:#123a5f; border-color:#123a5f; box-shadow:0 0 0 2px rgba(255,255,255,0.25); }
+[data-testid="stSidebar"] .sidebar-nav [data-testid="stRadio"] label:has(input[checked]) p{ color:#fff !important; }
+[data-testid="stSidebar"] .sidebar-nav [data-testid="stRadio"] label div{ display:flex; align-items:center; gap:0.4rem; }
+[data-testid="stSidebar"] .sidebar-nav [data-testid="stRadio"] label div:before{ content:""; }
 [data-testid="stSidebar"] .stButton>button{ background:rgba(255,255,255,0.14); border:1px solid rgba(255,255,255,0.25); color:#fff; }
 h1,h2,h3{ color:var(--accent); font-weight:800; letter-spacing:.4px; }
 p,li,span,div{ color:var(--text); }
@@ -194,8 +205,11 @@ if elegant_on:
       .stButton>button, .stRadio label, .stCheckbox label, .stSelectbox label{ border-radius:999px; font-weight:600; color:var(--accent); }
       .stButton>button{ border:1px solid rgba(18,58,95,0.35); background:rgba(18,58,95,0.06); }
       .stButton>button:hover{ background:rgba(18,58,95,0.12); border-color:#2d6f8e; color:#123a5f; }
-      [data-testid="stSidebar"]{ background:linear-gradient(180deg,#0b2f4c 0%,#123a5f 100%); color:#fff; }
-      [data-testid="stSidebar"] *{ color:#fff !important; }
+      [data-testid="stSidebar"]{ background:linear-gradient(180deg,#0b2f4c 0%,#123a5f 100%); color:#f5f8ff; }
+      [data-testid="stSidebar"] p,
+      [data-testid="stSidebar"] li,
+      [data-testid="stSidebar"] span,
+      [data-testid="stSidebar"] div{ color:inherit !important; }
     </style>
     """,
         unsafe_allow_html=True,
@@ -241,6 +255,161 @@ if "filters" not in st.session_state:
 
 # currency unit scaling factors
 UNIT_MAP = {"円": 1, "千円": 1_000, "百万円": 1_000_000}
+
+
+MENU_ITEMS = [
+    {
+        "key": "dashboard",
+        "label": "ダッシュボード",
+        "icon": "📈",
+        "description": "年計KPIと直近期のトレンドを俯瞰します。",
+    },
+    {
+        "key": "ranking",
+        "label": "ランキング",
+        "icon": "🏆",
+        "description": "年計規模とYoYでSKUを順位付けします。",
+    },
+    {
+        "key": "comparison",
+        "label": "比較ビュー",
+        "icon": "🆚",
+        "description": "SKUやセグメント間の年計推移を比較します。",
+    },
+    {
+        "key": "sku_detail",
+        "label": "SKU詳細",
+        "icon": "🔍",
+        "description": "個別SKUの成長ドライバーとノートを確認します。",
+    },
+    {
+        "key": "anomaly",
+        "label": "異常検知",
+        "icon": "🚨",
+        "description": "傾き・YoYの閾値を超えたSKUを抽出します。",
+    },
+    {
+        "key": "correlation",
+        "label": "相関分析",
+        "icon": "💡",
+        "description": "指標間の相関や散布図を確認します。",
+    },
+    {
+        "key": "alerts",
+        "label": "アラート",
+        "icon": "🔔",
+        "description": "AIがまとめた注目トピックを確認します。",
+    },
+    {
+        "key": "ingest",
+        "label": "データ取込",
+        "icon": "📥",
+        "description": "テンプレートに沿ったファイルをアップロードします。",
+    },
+    {
+        "key": "saved_views",
+        "label": "保存ビュー",
+        "icon": "🔖",
+        "description": "よく使う条件をブックマークできます。",
+    },
+    {
+        "key": "settings",
+        "label": "設定",
+        "icon": "⚙️",
+        "description": "年計ウィンドウや閾値・単位を調整します。",
+    },
+]
+
+MENU_LOOKUP = {item["key"]: item for item in MENU_ITEMS}
+
+
+SAMPLE_PRODUCTS = [
+    ("SKU-1001", "朝のブレンドコーヒー"),
+    ("SKU-1002", "アフタヌーンティーギフト"),
+    ("SKU-1003", "ナイトリラックスハーブ"),
+    ("SKU-1004", "季節限定スイーツセット"),
+]
+
+
+@st.cache_data
+def build_sample_template(months: int = 12) -> pd.DataFrame:
+    """小規模でも扱いやすいテンプレートデータを生成する。"""
+
+    period = pd.date_range("2023-01-01", periods=months, freq="MS")
+    rng = np.random.default_rng(7)
+    records: list[dict[str, float]] = []
+    for code, name in SAMPLE_PRODUCTS:
+        base = rng.integers(240_000, 460_000)
+        slope = rng.normal(20_000, 8_000)
+        row: dict[str, float] = {"商品名": name, "商品コード": code}
+        for idx, ym in enumerate(period):
+            noise = rng.normal(0, 30_000)
+            value = max(base + slope * idx + noise, 80_000)
+            row[ym.strftime("%Y-%m")] = int(np.round(value / 1000.0) * 1000)
+        records.append(row)
+
+    columns = ["商品名", "商品コード"] + [m.strftime("%Y-%m") for m in period]
+    return pd.DataFrame(records, columns=columns)
+
+
+@st.cache_data
+def prepare_sample_data(window: int, policy: str, last_n: int):
+    template = build_sample_template()
+    long_df = parse_uploaded_table(
+        template.copy(), product_name_col="商品名", product_code_col="商品コード"
+    )
+    long_df = fill_missing_months(long_df, policy=policy)
+    year_df = compute_year_rolling(long_df, window=window, policy=policy)
+    year_df = compute_slopes(year_df, last_n=last_n)
+    return template, long_df, year_df
+
+
+def render_data_onboarding():
+    template, sample_long, sample_year = prepare_sample_data(
+        st.session_state.settings.get("window", 12),
+        st.session_state.settings.get("missing_policy", "zero_fill"),
+        st.session_state.settings.get("last_n", 12),
+    )
+
+    st.markdown("### データを取り込んで可視化を始めましょう")
+    st.write("12カ月移動累計を算出するために、月次売上のワイド表をアップロードします。")
+
+    col_left, col_right = st.columns([2, 1])
+    with col_left:
+        st.markdown("#### スタートガイド")
+        st.markdown(
+            """
+1. テンプレートをダウンロードし、自社データを貼り付けます。
+2. ヘッダーは `YYYY-MM` 形式の月度に統一します。
+3. 左メニュー「データ取込」でアップロードし、変換を実行します。
+            """
+        )
+        st.caption("必要な列: 1列目 商品名、2列目 商品コード（任意）、3列目以降 月次売上金額。")
+        if st.button("サンプルデータで体験する", key="load_sample_data", type="secondary"):
+            st.session_state.data_monthly = sample_long
+            st.session_state.data_year = sample_year
+            st.success("サンプルデータを読み込みました。ダッシュボードに切り替えて確認できます。")
+
+    with col_right:
+        st.markdown("#### テンプレート")
+        st.download_button(
+            "CSVテンプレートをダウンロード",
+            data=template.to_csv(index=False).encode("utf-8-sig"),
+            file_name="rolling_sample_template.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        st.download_button(
+            "Excelテンプレートをダウンロード",
+            data=download_excel(template, "rolling_sample_template.xlsx"),
+            file_name="rolling_sample_template.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+
+    st.caption(
+        "サンプルデータを取り込むと主要チャートとAIコパイロットの回答例をすぐに確認できます。"
+    )
 
 
 def log_click(name: str):
@@ -291,10 +460,12 @@ def clip_text(value: str, width: int = 220) -> str:
 # ---------------- Helpers ----------------
 def require_data():
     if st.session_state.data_year is None or st.session_state.data_monthly is None:
-        st.info(
-            "データが未取り込みです。左メニュー「データ取込」からアップロードしてください。"
-        )
-        st.stop()
+        render_data_onboarding()
+        if (
+            st.session_state.data_year is None
+            or st.session_state.data_monthly is None
+        ):
+            st.stop()
 
 
 def month_options(df: pd.DataFrame) -> List[str]:
@@ -415,9 +586,9 @@ def choose_amount_slider_unit(max_amount: int) -> tuple[int, str]:
     return units[-1]
 
 
-def int_input(label: str, value: int) -> int:
+def int_input(label: str, value: int, *, help: Optional[str] = None) -> int:
     """Text input for integer values displayed with thousands separators."""
-    text = st.text_input(label, format_int(value))
+    text = st.text_input(label, format_int(value), help=help)
     try:
         return int(text.replace(",", ""))
     except ValueError:
@@ -672,38 +843,47 @@ st.sidebar.markdown(
     """,
     unsafe_allow_html=True,
 )
-page = st.sidebar.radio(
+st.sidebar.markdown("<div class='sidebar-nav'>", unsafe_allow_html=True)
+page_key = st.sidebar.radio(
     "メニュー",
-    [
-        "ダッシュボード",
-        "ランキング",
-        "比較ビュー",
-        "SKU詳細",
-        "異常検知",
-        "相関分析",
-        "データ取込",
-        "アラート",
-        "設定",
-        "保存ビュー",
-    ],
+    options=[item["key"] for item in MENU_ITEMS],
+    format_func=lambda key: f"{MENU_LOOKUP[key]['icon']}  {MENU_LOOKUP[key]['label']}",
+    key="main_menu",
 )
+st.sidebar.markdown("</div>", unsafe_allow_html=True)
+selected_menu = MENU_LOOKUP.get(page_key)
+if selected_menu:
+    st.sidebar.caption(selected_menu["description"])
 latest_month = render_sidebar_summary()
 st.sidebar.divider()
 
 with st.sidebar.expander("AIコパイロット", expanded=False):
-    st.caption("最新の年計スナップショットを使って質問できます。")
-    st.text_area(
-        "聞きたいこと",
-        key="copilot_question",
-        height=90,
-        placeholder="例：前年同月比が高いSKUや、下落しているSKUを教えて",
+    st.caption("最新の年計スナップショットを使って質問できます。分析観点を選ぶと回答が絞られます。")
+    st.markdown(
+        """
+**質問例**
+- 今月の前年同月比が高いSKUは？
+- 直近で急落している商品と要因を教えて。
+- 来月の売上をざっくり予測して。
+        """
     )
-    focus = st.selectbox(
-        "フォーカス",
-        ["全体サマリー", "伸びているSKU", "苦戦しているSKU"],
-        key="copilot_focus",
-    )
-    if st.button("AIに質問", key="ask_ai", use_container_width=True):
+    with st.form("copilot_form", clear_on_submit=False):
+        st.text_area(
+            "聞きたいこと",
+            key="copilot_question",
+            height=130,
+            placeholder="例：前年同月比が高いSKUや、下落しているSKUを教えて",
+            help="Ctrl+Enterでも送信できます。",
+        )
+        focus = st.selectbox(
+            "フォーカス",
+            ["全体サマリー", "伸びているSKU", "苦戦しているSKU"],
+            key="copilot_focus",
+            help="回答で強調したい対象を選びます。",
+        )
+        submitted = st.form_submit_button("AIに質問", use_container_width=True)
+
+    if submitted:
         question = st.session_state.get("copilot_question", "").strip()
         if not question:
             st.warning("質問を入力してください。")
@@ -726,10 +906,46 @@ render_app_hero()
 # ---------------- Pages ----------------
 
 # 1) データ取込
-if page == "データ取込":
+if page_key == "ingest":
     section_header(
         "データ取込", "ファイルのマッピングと品質チェックを行います。", icon="📥"
     )
+
+    template, sample_long, sample_year = prepare_sample_data(
+        st.session_state.settings.get("window", 12),
+        st.session_state.settings.get("missing_policy", "zero_fill"),
+        st.session_state.settings.get("last_n", 12),
+    )
+
+    col_help, col_download = st.columns([2, 1])
+    with col_help:
+        st.markdown(
+            "**テンプレートの列構成**\n\n"
+            "- 1列目: 商品名 (必須)\n"
+            "- 2列目: 商品コード (任意)\n"
+            "- 3列目以降: 月次売上金額 (YYYY-MM)\n"
+        )
+        st.caption("数値は円単位を想定していますが、通貨設定で調整できます。")
+        if st.button("サンプルデータを読み込む", key="ingest_load_sample", type="secondary"):
+            st.session_state.data_monthly = sample_long
+            st.session_state.data_year = sample_year
+            st.success("サンプルデータを読み込みました。ダッシュボードでグラフを確認できます。")
+    with col_download:
+        st.markdown("**テンプレートのダウンロード**")
+        st.download_button(
+            "CSVテンプレート",
+            data=template.to_csv(index=False).encode("utf-8-sig"),
+            file_name="rolling_sample_template.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        st.download_button(
+            "Excelテンプレート",
+            data=download_excel(template, "rolling_sample_template.xlsx"),
+            file_name="rolling_sample_template.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
 
     st.markdown(
         "**Excel(.xlsx) / CSV をアップロードしてください。** "
@@ -817,7 +1033,7 @@ if page == "データ取込":
                 st.exception(e)
 
 # 2) ダッシュボード
-elif page == "ダッシュボード":
+elif page_key == "dashboard":
     require_data()
     section_header("ダッシュボード", "年計KPIと成長トレンドを俯瞰します。", icon="📈")
 
@@ -956,7 +1172,7 @@ elif page == "ダッシュボード":
         )
 
 # 3) ランキング
-elif page == "ランキング":
+elif page_key == "ranking":
     require_data()
     section_header("ランキング", "上位と下位のSKUを瞬時に把握します。", icon="🏆")
     end_m = end_month_selector(st.session_state.data_year, key="end_month_rank")
@@ -1014,7 +1230,7 @@ elif page == "ランキング":
     )
 
     # 4) 比較ビュー（マルチ商品バンド）
-elif page == "比較ビュー":
+elif page_key == "comparison":
     require_data()
     section_header("マルチ商品比較", "条件を柔軟に切り替えてSKUを重ね合わせます。", icon="🔍")
     params = st.session_state.compare_params
@@ -1487,7 +1703,7 @@ zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配�
             )
 
     # 5) SKU詳細
-elif page == "SKU詳細":
+elif page_key == "sku_detail":
     require_data()
     section_header("SKU 詳細", "個別SKUのトレンドとメモを一元管理。", icon="🗂️")
     end_m = end_month_selector(st.session_state.data_year, key="end_month_detail")
@@ -1639,7 +1855,7 @@ elif page == "SKU詳細":
                 st.experimental_rerun()
 
 # 5) 異常検知
-elif page == "異常検知":
+elif page_key == "anomaly":
     require_data()
     section_header("異常検知", "回帰残差ベースで異常ポイントを抽出します。", icon="🚨")
     year_df = st.session_state.data_year.copy()
@@ -1832,7 +2048,7 @@ elif page == "異常検知":
             st.plotly_chart(fig_anom, use_container_width=True, config=PLOTLY_CONFIG)
 
 # 6) 相関分析
-elif page == "相関分析":
+elif page_key == "correlation":
     require_data()
     section_header("相関分析", "指標間の関係性からインサイトを発掘。", icon="🧭")
     end_m = end_month_selector(st.session_state.data_year, key="corr_end_month")
@@ -1961,7 +2177,7 @@ elif page == "相関分析":
         )
 
 # 6) アラート
-elif page == "アラート":
+elif page_key == "alerts":
     require_data()
     section_header("アラート", "閾値に該当したリスクSKUを自動抽出。", icon="⚠️")
     end_m = end_month_selector(st.session_state.data_year, key="end_month_alert")
@@ -1985,7 +2201,7 @@ elif page == "アラート":
         )
 
 # 6) 設定
-elif page == "設定":
+elif page_key == "settings":
     section_header("設定", "年計計算条件や閾値を調整します。", icon="⚙️")
     s = st.session_state.settings
     c1, c2, c3 = st.columns(3)
@@ -1996,6 +2212,7 @@ elif page == "設定":
             max_value=24,
             value=int(s["window"]),
             step=1,
+            help="12を基準に、季節性が強ければ期間を長く設定します。",
         )
         s["last_n"] = st.number_input(
             "傾き算出の対象点数",
@@ -2003,23 +2220,34 @@ elif page == "設定":
             max_value=36,
             value=int(s["last_n"]),
             step=1,
+            help="傾き計算に使う最新データ点数。大きくすると滑らかになります。",
         )
     with c2:
         s["yoy_threshold"] = st.number_input(
-            "YoY 閾値（<=）", value=float(s["yoy_threshold"]), step=0.01, format="%.2f"
+            "YoY 閾値（<=）",
+            value=float(s["yoy_threshold"]),
+            step=0.01,
+            format="%.2f",
+            help="前年同月比がこの値以下になったSKUをアラートに表示します。",
         )
-        s["delta_threshold"] = int_input("Δ 閾値（<= 円）", int(s["delta_threshold"]))
+        s["delta_threshold"] = int_input(
+            "Δ 閾値（<= 円）",
+            int(s["delta_threshold"]),
+            help="前月差(Δ)がこの金額以下なら警告します。単位は通貨設定に従います。",
+        )
     with c3:
         s["slope_threshold"] = st.number_input(
             "傾き 閾値（<=）",
             value=float(s["slope_threshold"]),
             step=0.1,
             format="%.2f",
+            help="直近の回帰傾きがこの値以下なら減速とみなします。単位は売上/期間。",
         )
         s["currency_unit"] = st.selectbox(
             "通貨単位表記",
             options=["円", "千円", "百万円"],
             index=["円", "千円", "百万円"].index(s["currency_unit"]),
+            help="ダッシュボードやテーブルの金額表示単位を切り替えます。",
         )
 
     st.caption("※ 設定変更後は再計算が必要です。")
@@ -2036,7 +2264,7 @@ elif page == "設定":
             st.success("再計算が完了しました。")
 
 # 7) 保存ビュー
-elif page == "保存ビュー":
+elif page_key == "saved_views":
     section_header("保存ビュー", "設定や比較条件をブックマーク。", icon="🔖")
     s = st.session_state.settings
     cparams = st.session_state.compare_params
