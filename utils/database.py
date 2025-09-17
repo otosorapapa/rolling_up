@@ -1,45 +1,65 @@
-"""DuckDB storage helpers built on top of SQLModel."""
+"""DuckDB storage helpers without requiring SQLModel."""
 
 from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional
 
+import duckdb
 import pandas as pd
-from sqlmodel import Field, Session, SQLModel, create_engine, select
-from sqlalchemy import func
 
 
-class SalesRecord(SQLModel, table=True):
-    """Represents a single monthly sales observation."""
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    month_key: str = Field(index=True)
-    month: date
-    product_code: Optional[str] = Field(default=None, index=True)
-    product_name: Optional[str] = None
-    category: Optional[str] = None
-    customer_id: Optional[str] = Field(default=None, index=True)
-    amount: float
-    quantity: Optional[float] = None
+_CONNECTION_CACHE: Dict[str, duckdb.DuckDBPyConnection] = {}
 
 
-_ENGINE_CACHE = {}
+def get_connection(path: str = "data/sales.duckdb") -> duckdb.DuckDBPyConnection:
+    """Return (and memoise) a DuckDB connection for the given path."""
 
-
-def get_engine(path: str = "data/sales.duckdb"):
-    """Return (and memoise) a DuckDB SQLModel engine."""
-
-    if path not in _ENGINE_CACHE:
+    if path not in _CONNECTION_CACHE:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        _ENGINE_CACHE[path] = create_engine(f"duckdb:///{path}")
-    return _ENGINE_CACHE[path]
+        _CONNECTION_CACHE[path] = duckdb.connect(path)
+    return _CONNECTION_CACHE[path]
 
 
 def create_db_and_tables(path: str = "data/sales.duckdb") -> None:
-    engine = get_engine(path)
-    SQLModel.metadata.create_all(engine)
+    """Ensure that the sales table exists."""
+
+    con = get_connection(path)
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sales_records (
+            month_key TEXT NOT NULL,
+            month DATE NOT NULL,
+            product_code TEXT,
+            product_name TEXT,
+            category TEXT,
+            customer_id TEXT,
+            amount DOUBLE NOT NULL,
+            quantity DOUBLE
+        )
+        """
+    )
+
+
+def _to_date(value: object) -> date:
+    """Convert a value to a Python ``date``."""
+
+    parsed = pd.to_datetime(value)
+    if pd.isna(parsed):
+        raise ValueError("Invalid month value")
+    return parsed.date()
+
+
+def _safe_get(row: pd.Series, key: str) -> Optional[object]:
+    """Return a value from a Series with ``None`` for missing/NaN."""
+
+    if key not in row.index:
+        return None
+    value = row[key]
+    if pd.isna(value):
+        return None
+    return value
 
 
 def upsert_sales_records(df: pd.DataFrame, path: str = "data/sales.duckdb") -> int:
@@ -47,81 +67,127 @@ def upsert_sales_records(df: pd.DataFrame, path: str = "data/sales.duckdb") -> i
 
     if df.empty:
         return 0
-    engine = get_engine(path)
-    create_db_and_tables(path)
-    records = []
-    has_month_start = "month_start" in df.columns
-    for _, row in df.iterrows():
-        month_value = (
-            pd.to_datetime(row["month_start"]).date()
-            if has_month_start and pd.notna(row.get("month_start"))
-            else pd.to_datetime(row["month"]).date()
-        )
-        record = SalesRecord(
-            month_key=row["month"],
-            month=month_value,
-            product_code=row.get("product_code"),
-            product_name=row.get("product_name"),
-            category=row.get("category"),
-            customer_id=row.get("customer_id"),
-            amount=float(row["amount"]),
-            quantity=float(row.get("quantity", 0) or 0),
-        )
-        records.append(record)
 
-    with Session(engine) as session:
-        affected = 0
-        for record in records:
-            stmt = select(SalesRecord).where(SalesRecord.month_key == record.month_key)
-            if record.product_code:
-                stmt = stmt.where(SalesRecord.product_code == record.product_code)
-            else:
-                stmt = stmt.where(SalesRecord.product_code.is_(None))
-            existing = session.exec(stmt).first()
-            if existing:
-                existing.amount = record.amount
-                existing.quantity = record.quantity
-                existing.product_name = record.product_name
-                existing.category = record.category
-                existing.customer_id = record.customer_id
-            else:
-                session.add(record)
-            affected += 1
-        session.commit()
-    return affected
+    create_db_and_tables(path)
+    con = get_connection(path)
+
+    has_month_start = "month_start" in df.columns
+    prepared: List[dict[str, object]] = []
+
+    for _, row in df.iterrows():
+        month_key = str(row["month"])
+        if has_month_start and "month_start" in row.index and pd.notna(row["month_start"]):
+            month_value = _to_date(row["month_start"])
+        else:
+            month_value = _to_date(row["month"])
+        product_code = _safe_get(row, "product_code")
+        product_name = _safe_get(row, "product_name")
+        category = _safe_get(row, "category")
+        customer_id = _safe_get(row, "customer_id")
+        quantity_value = _safe_get(row, "quantity")
+        quantity = float(quantity_value) if quantity_value is not None else 0.0
+        amount = float(row["amount"])
+        prepared.append(
+            {
+                "month_key": month_key,
+                "month": month_value,
+                "product_code": product_code,
+                "product_name": product_name,
+                "category": category,
+                "customer_id": customer_id,
+                "amount": amount,
+                "quantity": quantity,
+            }
+        )
+
+    con.execute("BEGIN TRANSACTION")
+    try:
+        for record in prepared:
+            product_code = record["product_code"]
+            con.execute(
+                """
+                DELETE FROM sales_records
+                WHERE month_key = ?
+                  AND (
+                        (product_code IS NULL AND ? IS NULL)
+                        OR product_code = ?
+                  )
+                """,
+                [record["month_key"], product_code, product_code],
+            )
+            con.execute(
+                """
+                INSERT INTO sales_records (
+                    month_key,
+                    month,
+                    product_code,
+                    product_name,
+                    category,
+                    customer_id,
+                    amount,
+                    quantity
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    record["month_key"],
+                    record["month"],
+                    record["product_code"],
+                    record["product_name"],
+                    record["category"],
+                    record["customer_id"],
+                    record["amount"],
+                    record["quantity"],
+                ],
+            )
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+
+    return len(prepared)
 
 
 def fetch_monthly_totals(path: str = "data/sales.duckdb", limit: int = 24) -> pd.DataFrame:
     """Return aggregated totals for the latest months."""
 
-    engine = get_engine(path)
-    with Session(engine) as session:
-        statement = (
-            select(
-                SalesRecord.month_key,
-                func.sum(SalesRecord.amount).label("amount"),
-            )
-            .group_by(SalesRecord.month_key)
-            .order_by(SalesRecord.month_key)
-        )
-        results = session.exec(statement).all()
-    df = pd.DataFrame(results, columns=["month", "amount"])
+    create_db_and_tables(path)
+    con = get_connection(path)
+    df = con.execute(
+        """
+        SELECT month_key AS month, SUM(amount) AS amount
+        FROM sales_records
+        GROUP BY month_key
+        ORDER BY month_key
+        """
+    ).df()
     if limit:
-        df = df.tail(limit)
+        df = df.tail(limit).reset_index(drop=True)
     if not df.empty:
-        df["month_start"] = pd.to_datetime(df["month"], format="%Y-%m")
+        df["month_start"] = pd.to_datetime(df["month"], format="%Y-%m", errors="coerce")
     return df
+
+
+_ALLOWED_SEGMENT_COLUMNS = {"product_code", "product_name", "category", "customer_id"}
 
 
 def fetch_segment(path: str, column: str) -> pd.DataFrame:
     """Aggregate amount by a specific column (e.g. category)."""
 
-    engine = get_engine(path)
-    with Session(engine) as session:
-        statement = (
-            select(getattr(SalesRecord, column), func.sum(SalesRecord.amount))
-            .group_by(getattr(SalesRecord, column))
-            .where(getattr(SalesRecord, column).is_not(None))
-        )
-        rows = session.exec(statement).all()
-    return pd.DataFrame(rows, columns=[column, "amount"])
+    if column not in _ALLOWED_SEGMENT_COLUMNS:
+        raise ValueError(f"Unsupported segment column: {column}")
+
+    create_db_and_tables(path)
+    con = get_connection(path)
+    df = con.execute(
+        f"""
+        SELECT {column} AS value, SUM(amount) AS amount
+        FROM sales_records
+        WHERE {column} IS NOT NULL
+        GROUP BY {column}
+        ORDER BY amount DESC
+        """
+    ).df()
+    if df.empty:
+        return pd.DataFrame(columns=[column, "amount"])
+    df = df.rename(columns={"value": column})
+    return df
