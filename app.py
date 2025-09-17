@@ -1,15 +1,22 @@
 import io
 import json
 import math
+import textwrap
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from ai_features import summarize_dataframe, generate_comment, explain_analysis
+from ai_features import (
+    summarize_dataframe,
+    generate_comment,
+    explain_analysis,
+    generate_actions,
+    answer_question,
+)
 
 # McKinsey inspired palette
 MCKINSEY_PALETTE = [
@@ -56,6 +63,16 @@ def _ai_comment(t: str) -> str:
     return generate_comment(t)
 
 
+@st.cache_data(ttl=600)
+def _ai_actions(metrics: Dict[str, float], focus: str) -> str:
+    return generate_actions(metrics, focus)
+
+
+@st.cache_data(ttl=600)
+def _ai_answer(question: str, context: str) -> str:
+    return answer_question(question, context)
+
+
 from services import (
     parse_uploaded_table,
     fill_missing_months,
@@ -88,21 +105,46 @@ st.markdown(
     """
 <style>
 :root{
-  --bg:#f7f9fc;
+  --bg:#f3f6fb;
   --panel:#ffffff;
   --text:#243746;
   --accent:#003a70;
+  --accent-soft:#0f4c81;
+  --muted:#5b6770;
 }
 body, .stApp, [data-testid="stAppViewContainer"]{ background:var(--bg) !important; color:var(--text) !important; }
-[data-testid="stSidebar"]{ background:#003a70; color:#fff; }
+[data-testid="stSidebar"]{ background:linear-gradient(180deg,#012a4a 0%,#003a70 100%); color:#fff; padding-top:1rem; }
 [data-testid="stSidebar"] *{ color:#fff !important; }
-.chart-card{ background:var(--panel); border:1px solid rgba(0,0,0,.08); border-radius:12px; }
-.chart-toolbar{ background:linear-gradient(180deg, rgba(0,58,112,.05), rgba(0,58,112,.01)); border-bottom:1px solid rgba(0,58,112,.20); }
+[data-testid="stSidebar"] .stButton>button{ background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.2); color:#fff; }
 h1,h2,h3{ color:var(--accent); font-weight:800; letter-spacing:.4px; }
 p,li,span,div{ color:var(--text); }
-[data-testid="stMetric"]{ background:var(--panel); border:1px solid rgba(0,0,0,.08); border-radius:10px; padding:0.75rem; }
+[data-testid="stMetric"]{ background:var(--panel); border:1px solid rgba(0,0,0,0.06); border-radius:12px; padding:0.75rem 0.85rem; box-shadow:0 4px 12px rgba(15,31,53,0.05); }
 [data-testid="stMetricValue"]{ color:var(--accent); font-variant-numeric:tabular-nums; font-weight:700; }
-[data-testid="stMetricLabel"]{ color:var(--text); font-weight:600; }
+[data-testid="stMetricLabel"]{ color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.08em; }
+.mck-sidebar-summary{ background:rgba(255,255,255,0.08); border-radius:12px; padding:0.85rem; margin-bottom:1.2rem; font-size:0.88rem; line-height:1.5; }
+.mck-sidebar-summary strong{ color:#fff; }
+.mck-hero{ background:linear-gradient(135deg, rgba(0,58,112,0.92) 0%, rgba(15,76,129,0.85) 100%); color:#fff; padding:1.8rem 2rem; border-radius:18px; margin-bottom:1.2rem; box-shadow:0 18px 40px rgba(0,36,70,0.25); position:relative; overflow:hidden; }
+.mck-hero::after{ content:""; position:absolute; inset:auto -20% -35% auto; width:220px; height:220px; background:rgba(255,255,255,0.08); border-radius:50%; }
+.mck-hero h1{ color:#fff; margin-bottom:0.5rem; font-size:1.9rem; }
+.mck-hero p{ color:rgba(255,255,255,0.82); font-size:1rem; margin-bottom:0; }
+.mck-hero__eyebrow{ text-transform:uppercase; letter-spacing:.16em; font-size:0.75rem; font-weight:600; color:rgba(255,255,255,0.8); margin-bottom:0.6rem; display:inline-flex; align-items:center; gap:0.5rem; }
+.mck-hero__eyebrow:before{ content:"◦"; font-size:0.9rem; }
+.mck-section-header{ display:flex; align-items:flex-start; gap:0.85rem; margin:0.8rem 0 0.6rem; }
+.mck-section-header h2{ margin:0; font-size:1.35rem; line-height:1.2; }
+.mck-section-subtitle{ margin:0.25rem 0 0; font-size:0.92rem; color:var(--muted); }
+.mck-section-icon{ width:42px; height:42px; display:inline-flex; align-items:center; justify-content:center; border-radius:50%; background:rgba(0,58,112,0.1); color:var(--accent); font-size:1.2rem; flex-shrink:0; margin-top:0.1rem; }
+.mck-ai-answer{ background:var(--panel); border-radius:12px; border:1px solid rgba(0,0,0,0.08); padding:0.75rem 0.9rem; box-shadow:0 12px 24px rgba(15,31,53,0.08); margin-top:0.75rem; }
+.mck-ai-answer strong{ color:var(--accent); }
+.stTabs [data-baseweb="tab-list"]{ gap:0.6rem; }
+.stTabs [data-baseweb="tab"]{ background:var(--panel); padding:0.6rem 1rem; border-radius:999px; border:1px solid rgba(0,58,112,0.18); color:var(--muted); font-weight:600; }
+.stTabs [data-baseweb="tab"]:hover{ border-color:rgba(0,58,112,0.4); color:var(--accent); }
+.stTabs [data-baseweb="tab"]:focus{ outline:none; }
+.stTabs [aria-selected="true"]{ background:#003a70; color:#fff; border-color:#003a70; }
+.stDataFrame{ border-radius:14px !important; }
+.stButton>button{ border-radius:999px; padding:0.45rem 1.2rem; font-weight:600; border:1px solid rgba(0,58,112,0.35); color:var(--accent); background:rgba(0,58,112,0.05); }
+.stButton>button:hover{ background:rgba(0,58,112,0.12); border-color:#003a70; color:#003a70; }
+.chart-card{ background:var(--panel); border:1px solid rgba(0,0,0,0.08); border-radius:14px; box-shadow:0 12px 24px rgba(15,31,53,0.06); }
+.chart-toolbar{ background:linear-gradient(180deg, rgba(0,58,112,0.05), rgba(0,58,112,0.01)); border-bottom:1px solid rgba(0,58,112,0.2); }
 </style>
     """,
     unsafe_allow_html=True,
@@ -122,25 +164,26 @@ if elegant_on:
         """
     <style>
       :root{
-        --ink:#243746;
-        --bg:#f7f9fc;
+        --ink:#1b2733;
+        --bg:#edf1f6;
         --panel:#ffffff;
-        --line:rgba(0,0,0,.08);
+        --line:rgba(0,0,0,.06);
         --accent:#003a70;
+        --muted:#4a5963;
       }
+      body, .stApp, [data-testid="stAppViewContainer"]{ background:var(--bg) !important; color:var(--ink) !important; }
       h1,h2,h3{ letter-spacing:.3px; font-weight:800; color:var(--accent); }
       p,li,div,span{ font-variant-numeric: tabular-nums; color:var(--ink); }
       .chart-card, .stTabs, .stDataFrame, .element-container{
-        border-radius:14px; box-shadow:0 4px 12px rgba(0,0,0,.08);
-        border:1px solid var(--line);
-        background:var(--panel);
+        border-radius:16px; box-shadow:0 16px 32px rgba(18,38,67,.08);
+        border:1px solid var(--line); background:var(--panel);
       }
       .chart-toolbar{
-        background:linear-gradient(180deg, rgba(0,58,112,.06), rgba(0,58,112,.02));
-        border-bottom:1px solid rgba(0,58,112,.20);
+        background:linear-gradient(180deg, rgba(0,58,112,.08), rgba(0,58,112,.02));
+        border-bottom:1px solid rgba(0,58,112,.18);
       }
-      .stButton>button, .stRadio label, .stCheckbox label{ border-radius:6px; font-weight:600; }
-      [data-testid="stSidebar"]{ background:#003a70; color:#fff; }
+      .stButton>button, .stRadio label, .stCheckbox label, .stSelectbox label{ border-radius:999px; font-weight:600; }
+      [data-testid="stSidebar"]{ background:linear-gradient(180deg,#012a4a 0%,#003a70 100%); color:#fff; }
       [data-testid="stSidebar"] *{ color:#fff !important; }
     </style>
     """,
@@ -172,6 +215,12 @@ if "compare_params" not in st.session_state:
     st.session_state.compare_params = {}
 if "compare_results" not in st.session_state:
     st.session_state.compare_results = None
+if "copilot_answer" not in st.session_state:
+    st.session_state.copilot_answer = ""
+if "copilot_context" not in st.session_state:
+    st.session_state.copilot_context = ""
+if "copilot_focus" not in st.session_state:
+    st.session_state.copilot_focus = "全体サマリー"
 
 # track user interactions and global filters
 if "click_log" not in st.session_state:
@@ -186,6 +235,46 @@ UNIT_MAP = {"円": 1, "千円": 1_000, "百万円": 1_000_000}
 def log_click(name: str):
     """Increment click count for command bar actions."""
     st.session_state.click_log[name] = st.session_state.click_log.get(name, 0) + 1
+
+
+def render_app_hero():
+    st.markdown(
+        f"""
+        <div class=\"mck-hero\">
+            <div class=\"mck-hero__eyebrow\">Growth Intelligence Workspace</div>
+            <h1>{APP_TITLE}</h1>
+            <p>12カ月移動累計で成長ドライバーとリスクを直感的に把握し、次の一手を素早く導きます。</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def section_header(
+    title: str, subtitle: Optional[str] = None, icon: Optional[str] = None
+):
+    icon_html = f"<span class='mck-section-icon'>{icon}</span>" if icon else ""
+    subtitle_html = (
+        f"<p class='mck-section-subtitle'>{subtitle}</p>" if subtitle else ""
+    )
+    st.markdown(
+        f"""
+        <div class=\"mck-section-header\">
+            {icon_html}
+            <div>
+                <h2>{title}</h2>
+                {subtitle_html}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def clip_text(value: str, width: int = 220) -> str:
+    if not value:
+        return ""
+    return textwrap.shorten(value, width=width, placeholder="…")
 
 
 # ---------------- Helpers ----------------
@@ -282,6 +371,143 @@ def int_input(label: str, value: int) -> int:
         return int(text.replace(",", ""))
     except ValueError:
         return value
+
+
+def render_sidebar_summary() -> Optional[str]:
+    year_df = st.session_state.get("data_year")
+    if year_df is None or year_df.empty:
+        st.sidebar.caption("データを取り込むと最新サマリーが表示されます。")
+        return None
+
+    months = month_options(year_df)
+    if not months:
+        st.sidebar.caption("月次データが存在しません。")
+        return None
+
+    end_m = months[-1]
+    unit = st.session_state.settings.get("currency_unit", "円")
+    kpi = aggregate_overview(year_df, end_m)
+    hhi_val = compute_hhi(year_df, end_m)
+    sku_cnt = int(year_df["product_code"].nunique())
+    rec_cnt = int(len(year_df))
+
+    total_txt = format_amount(kpi.get("total_year_sum"), unit)
+    yoy_val = kpi.get("yoy")
+    yoy_txt = f"{yoy_val * 100:.1f}%" if yoy_val is not None else "—"
+    delta_txt = format_amount(kpi.get("delta"), unit)
+    hhi_txt = f"{hhi_val:.3f}" if hhi_val is not None else "—"
+
+    st.sidebar.markdown(
+        f"""
+        <div class=\"mck-sidebar-summary\">
+            <strong>最新月:</strong> {end_m}<br>
+            <strong>年計総額:</strong> {total_txt}<br>
+            <strong>YoY:</strong> {yoy_txt}<br>
+            <strong>Δ:</strong> {delta_txt}<br>
+            <strong>HHI:</strong> {hhi_txt}<br>
+            <strong>SKU数:</strong> {sku_cnt:,}<br>
+            <strong>レコード:</strong> {rec_cnt:,}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    return end_m
+
+
+def build_copilot_context(
+    focus: str, end_month: Optional[str] = None, top_n: int = 5
+) -> str:
+    year_df = st.session_state.get("data_year")
+    if year_df is None or year_df.empty:
+        return "データが取り込まれていません。"
+
+    months = month_options(year_df)
+    if not months:
+        return "月度情報が存在しません。"
+
+    end_m = end_month or months[-1]
+    snap = (
+        year_df[year_df["month"] == end_m]
+        .dropna(subset=["year_sum"])
+        .copy()
+    )
+    if snap.empty:
+        return f"{end_m}の年計スナップショットが空です。"
+
+    kpi = aggregate_overview(year_df, end_m)
+    hhi_val = compute_hhi(year_df, end_m)
+
+    def fmt_amt(val: Optional[float]) -> str:
+        if val is None or pd.isna(val):
+            return "—"
+        return f"{format_int(val)}円"
+
+    def fmt_pct(val: Optional[float]) -> str:
+        if val is None or pd.isna(val):
+            return "—"
+        return f"{val * 100:.1f}%"
+
+    lines = [
+        f"対象月: {end_m}",
+        f"年計総額: {fmt_amt(kpi.get('total_year_sum'))}",
+        f"年計YoY: {fmt_pct(kpi.get('yoy'))}",
+        f"前月差Δ: {fmt_amt(kpi.get('delta'))}",
+        f"SKU数: {snap['product_code'].nunique():,}",
+    ]
+    if hhi_val is not None:
+        lines.append(f"HHI: {hhi_val:.3f}")
+
+    if focus == "伸びているSKU":
+        subset = (
+            snap.dropna(subset=["yoy"])
+            .sort_values("yoy", ascending=False)
+            .head(top_n)
+        )
+        label = "伸長SKU"
+    elif focus == "苦戦しているSKU":
+        subset = (
+            snap.dropna(subset=["yoy"])
+            .sort_values("yoy", ascending=True)
+            .head(top_n)
+        )
+        label = "苦戦SKU"
+    else:
+        subset = snap.sort_values("year_sum", ascending=False).head(top_n)
+        label = "主要SKU"
+
+    if not subset.empty:
+        bullets = []
+        for _, row in subset.iterrows():
+            name = row.get("product_name") or row.get("product_code")
+            yoy_txt = fmt_pct(row.get("yoy"))
+            delta_txt = fmt_amt(row.get("delta"))
+            bullets.append(
+                f"{name} (年計 {fmt_amt(row.get('year_sum'))}, YoY {yoy_txt}, Δ {delta_txt})"
+            )
+        lines.append(f"{label}: " + " / ".join(bullets))
+
+    worst = (
+        snap.dropna(subset=["yoy"])
+        .sort_values("yoy", ascending=True)
+        .head(1)
+    )
+    best = (
+        snap.dropna(subset=["yoy"])
+        .sort_values("yoy", ascending=False)
+        .head(1)
+    )
+    if not best.empty:
+        b = best.iloc[0]
+        lines.append(
+            f"YoY最高: {(b['product_name'] or b['product_code'])} ({fmt_pct(b['yoy'])})"
+        )
+    if not worst.empty:
+        w = worst.iloc[0]
+        lines.append(
+            f"YoY最低: {(w['product_name'] or w['product_code'])} ({fmt_pct(w['yoy'])})"
+        )
+
+    return " ｜ ".join(lines)
 
 
 def marker_step(dates, target_points=24):
@@ -387,7 +613,14 @@ NAME_MAP = {
 
 
 # ---------------- Sidebar ----------------
-st.sidebar.title(APP_TITLE)
+st.sidebar.markdown(
+    f"""
+    <div style="font-weight:700; font-size:1.05rem; letter-spacing:.08em; text-transform:uppercase; margin-bottom:0.75rem;">
+        {APP_TITLE}
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 page = st.sidebar.radio(
     "メニュー",
     [
@@ -402,12 +635,49 @@ page = st.sidebar.radio(
         "保存ビュー",
     ],
 )
+latest_month = render_sidebar_summary()
+st.sidebar.divider()
+
+with st.sidebar.expander("AIコパイロット", expanded=False):
+    st.caption("最新の年計スナップショットを使って質問できます。")
+    st.text_area(
+        "聞きたいこと",
+        key="copilot_question",
+        height=90,
+        placeholder="例：前年同月比が高いSKUや、下落しているSKUを教えて",
+    )
+    focus = st.selectbox(
+        "フォーカス",
+        ["全体サマリー", "伸びているSKU", "苦戦しているSKU"],
+        key="copilot_focus",
+    )
+    if st.button("AIに質問", key="ask_ai", use_container_width=True):
+        question = st.session_state.get("copilot_question", "").strip()
+        if not question:
+            st.warning("質問を入力してください。")
+        else:
+            context = build_copilot_context(focus, end_month=latest_month)
+            answer = _ai_answer(question, context)
+            st.session_state.copilot_answer = answer
+            st.session_state.copilot_context = context
+    if st.session_state.copilot_answer:
+        st.markdown(
+            f"<div class='mck-ai-answer'><strong>AI回答</strong><br>{st.session_state.copilot_answer}</div>",
+            unsafe_allow_html=True,
+        )
+        if st.session_state.copilot_context:
+            st.caption("コンテキスト: " + clip_text(st.session_state.copilot_context, 220))
+st.sidebar.divider()
+
+render_app_hero()
 
 # ---------------- Pages ----------------
 
 # 1) データ取込
 if page == "データ取込":
-    st.header("データ取込 / マッピング / 品質チェック")
+    section_header(
+        "データ取込", "ファイルのマッピングと品質チェックを行います。", icon="📥"
+    )
 
     st.markdown(
         "**Excel(.xlsx) / CSV をアップロードしてください。** "
@@ -497,7 +767,7 @@ if page == "データ取込":
 # 2) ダッシュボード
 elif page == "ダッシュボード":
     require_data()
-    st.header("ダッシュボード")
+    section_header("ダッシュボード", "年計KPIと成長トレンドを俯瞰します。", icon="📈")
 
     # Command bar (期間/単位)
     with st.container():
@@ -551,76 +821,92 @@ elif page == "ダッシュボード":
         .sort_values("year_sum", ascending=False)
     )
 
-    ai_on = st.toggle(
-        "AIサマリー",
-        value=False,
-        help="要約・コメント・自動説明を表示（オンデマンド計算）",
-    )
-    if ai_on:
-        with st.spinner("AI要約を生成中…"):
-            kpi_text = _ai_explain(
-                {
-                    "年計総額": kpi["total_year_sum"],
-                    "年計YoY": kpi["yoy"],
-                    "前月差Δ": kpi["delta"],
-                }
-            )
-            snap_ai = snap[["year_sum", "yoy", "delta"]].head(100)
-            stat_text = _ai_sum_df(snap_ai)
-            st.info(f"**AI説明**：{kpi_text}\n\n**AI要約**：{stat_text}")
-            st.caption(_ai_comment("直近の年計トレンドと上位SKUの動向"))
-
-    # 総合年計トレンド（全SKU合計）
     totals = st.session_state.data_year.groupby("month", as_index=False)[
         "year_sum"
     ].sum()
     totals["year_sum_disp"] = totals["year_sum"] / UNIT_MAP[unit]
-    fig = px.line(
-        totals, x="month", y="year_sum_disp", title="総合 年計トレンド", markers=True
-    )
-    fig.update_yaxes(title=f"年計({unit})", tickformat="~,d")
-    fig.update_layout(height=525, margin=dict(l=10, r=10, t=50, b=10))
-    fig = apply_elegant_theme(fig, theme=st.session_state.get("ui_theme", "dark"))
-    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
-    # ランキング（年計）
-    st.subheader(f"ランキング（{end_m} 時点 年計）")
-    snap_disp = snap.copy()
-    snap_disp["year_sum"] = snap_disp["year_sum"] / UNIT_MAP[unit]
-    st.dataframe(
-        snap_disp[["product_code", "product_name", "year_sum", "yoy", "delta"]].head(
-            20
-        ),
-        use_container_width=True,
-    )
-    st.download_button(
-        "この表をCSVでダウンロード",
-        data=snap.to_csv(index=False).encode("utf-8-sig"),
-        file_name=f"ranking_{end_m}.csv",
-        mime="text/csv",
-    )
+    tab_highlight, tab_ranking = st.tabs(["ハイライト", "ランキング / エクスポート"])
 
-    # PDF出力（KPI + TOP10）
-    pdf_bytes = download_pdf_overview(
-        {
-            "total_year_sum": int(kpi["total_year_sum"]),
-            "yoy": round(kpi["yoy"], 4) if kpi["yoy"] is not None else None,
-            "delta": int(kpi["delta"]) if kpi["delta"] is not None else None,
-        },
-        snap,
-        filename=f"overview_{end_m}.pdf",
-    )
-    st.download_button(
-        "会議用PDF（KPI+Top10）を出力",
-        data=pdf_bytes,
-        file_name=f"overview_{end_m}.pdf",
-        mime="application/pdf",
-    )
+    with tab_highlight:
+        ai_on = st.toggle(
+            "AIサマリー",
+            value=False,
+            help="要約・コメント・自動説明を表示（オンデマンド計算）",
+            key="dash_ai_summary",
+        )
+        if ai_on:
+            with st.spinner("AI要約を生成中…"):
+                kpi_text = _ai_explain(
+                    {
+                        "年計総額": kpi["total_year_sum"],
+                        "年計YoY": kpi["yoy"],
+                        "前月差Δ": kpi["delta"],
+                    }
+                )
+                snap_ai = snap[["year_sum", "yoy", "delta"]].head(100)
+                stat_text = _ai_sum_df(snap_ai)
+                st.info(f"**AI説明**：{kpi_text}\n\n**AI要約**：{stat_text}")
+                actions = _ai_actions(
+                    {
+                        "total_year_sum": float(kpi.get("total_year_sum") or 0.0),
+                        "yoy": float(kpi.get("yoy") or 0.0),
+                        "delta": float(kpi.get("delta") or 0.0),
+                        "hhi": float(hhi or 0.0),
+                    },
+                    focus=end_m,
+                )
+                st.success(f"**AI推奨アクション**：{actions}")
+                st.caption(_ai_comment("直近の年計トレンドと上位SKUの動向"))
+
+        fig = px.line(
+            totals, x="month", y="year_sum_disp", title="総合 年計トレンド", markers=True
+        )
+        fig.update_yaxes(title=f"年計({unit})", tickformat="~,d")
+        fig.update_layout(height=525, margin=dict(l=10, r=10, t=50, b=10))
+        fig = apply_elegant_theme(fig, theme=st.session_state.get("ui_theme", "dark"))
+        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+        st.caption("凡例クリックで系列の表示切替、ダブルクリックで単独表示。")
+
+    with tab_ranking:
+        st.markdown(f"#### ランキング（{end_m} 時点 年計）")
+        snap_disp = snap.copy()
+        snap_disp["year_sum"] = snap_disp["year_sum"] / UNIT_MAP[unit]
+        st.dataframe(
+            snap_disp[["product_code", "product_name", "year_sum", "yoy", "delta"]].head(
+                20
+            ),
+            use_container_width=True,
+        )
+        st.download_button(
+            "この表をCSVでダウンロード",
+            data=snap.to_csv(index=False).encode("utf-8-sig"),
+            file_name=f"ranking_{end_m}.csv",
+            mime="text/csv",
+        )
+
+        pdf_bytes = download_pdf_overview(
+            {
+                "total_year_sum": int(kpi["total_year_sum"])
+                if kpi["total_year_sum"] is not None
+                else 0,
+                "yoy": round(kpi["yoy"], 4) if kpi["yoy"] is not None else None,
+                "delta": int(kpi["delta"]) if kpi["delta"] is not None else None,
+            },
+            snap,
+            filename=f"overview_{end_m}.pdf",
+        )
+        st.download_button(
+            "会議用PDF（KPI+Top10）を出力",
+            data=pdf_bytes,
+            file_name=f"overview_{end_m}.pdf",
+            mime="application/pdf",
+        )
 
 # 3) ランキング
 elif page == "ランキング":
     require_data()
-    st.header("ランキング / ワースト")
+    section_header("ランキング", "上位と下位のSKUを瞬時に把握します。", icon="🏆")
     end_m = end_month_selector(st.session_state.data_year, key="end_month_rank")
     metric = st.selectbox(
         "指標", options=["year_sum", "yoy", "delta", "slope_beta"], index=0
@@ -678,7 +964,7 @@ elif page == "ランキング":
     # 4) 比較ビュー（マルチ商品バンド）
 elif page == "比較ビュー":
     require_data()
-    st.header("マルチ商品比較")
+    section_header("マルチ商品比較", "条件を柔軟に切り替えてSKUを重ね合わせます。", icon="🔍")
     params = st.session_state.compare_params
     year_df = st.session_state.data_year
     end_m = end_month_selector(year_df, key="compare_end_month")
@@ -1134,7 +1420,7 @@ zスコア：全SKUの傾き分布に対する標準化。|z|≥1.5で急勾配�
     # 5) SKU詳細
 elif page == "SKU詳細":
     require_data()
-    st.header("SKU 詳細")
+    section_header("SKU 詳細", "個別SKUのトレンドとメモを一元管理。", icon="🗂️")
     end_m = end_month_selector(st.session_state.data_year, key="end_month_detail")
     prods = (
         st.session_state.data_year[["product_code", "product_name"]]
@@ -1244,7 +1530,7 @@ elif page == "SKU詳細":
 # 5) 相関分析
 elif page == "相関分析":
     require_data()
-    st.header("相関分析")
+    section_header("相関分析", "指標間の関係性からインサイトを発掘。", icon="🧭")
     end_m = end_month_selector(st.session_state.data_year, key="corr_end_month")
     snapshot = latest_yearsum_snapshot(st.session_state.data_year, end_m)
 
@@ -1373,7 +1659,7 @@ elif page == "相関分析":
 # 6) アラート
 elif page == "アラート":
     require_data()
-    st.header("アラート")
+    section_header("アラート", "閾値に該当したリスクSKUを自動抽出。", icon="⚠️")
     end_m = end_month_selector(st.session_state.data_year, key="end_month_alert")
     s = st.session_state.settings
     alerts = build_alerts(
@@ -1396,7 +1682,7 @@ elif page == "アラート":
 
 # 6) 設定
 elif page == "設定":
-    st.header("設定")
+    section_header("設定", "年計計算条件や閾値を調整します。", icon="⚙️")
     s = st.session_state.settings
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -1447,7 +1733,7 @@ elif page == "設定":
 
 # 7) 保存ビュー
 elif page == "保存ビュー":
-    st.header("保存ビュー / ブックマーク")
+    section_header("保存ビュー", "設定や比較条件をブックマーク。", icon="🔖")
     s = st.session_state.settings
     cparams = st.session_state.compare_params
     st.write("現在の設定・選択（閾値、ウィンドウ、単位など）を名前を付けて保存します。")

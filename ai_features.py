@@ -92,3 +92,49 @@ def explain_analysis(metrics: Dict[str, float]) -> str:
         )
         return pipe(prompt, max_new_tokens=120)[0]["generated_text"].strip()
     return f"分析結果: {summary}"  # fallback
+
+
+def generate_actions(metrics: Dict[str, float], focus: str) -> str:
+    """Suggest follow-up actions based on KPI trends."""
+
+    summary = ", ".join(f"{k}={v}" for k, v in metrics.items()) or "指標なし"
+    pipe = _load_pipeline()
+    if pipe is not None:
+        prompt = (
+            "次のKPIの状況を踏まえ、経営会議向けに3つの実行アクションを日本語で提案してください。"
+            f"対象月: {focus}\n指標: {summary}"
+        )
+        return pipe(prompt, max_new_tokens=160)[0]["generated_text"].strip()
+
+    yoy = metrics.get("yoy", 0.0) or 0.0
+    delta = metrics.get("delta", 0.0) or 0.0
+    actions = []
+    if yoy < 0:
+        actions.append("YoYがマイナスなので重点SKUの販促計画と価格見直しを検討する")
+    else:
+        actions.append("好調SKUの在庫確保と追加クロスセル施策を準備する")
+    if delta < 0:
+        actions.append("直近の落ち込み要因を営業ヒアリングで特定し対策を共有する")
+    else:
+        actions.append("増加分の持続可否を需給シミュレーションで検証する")
+    actions.append("集中度を踏まえ、上位SKUへの依存リスクと補完商品の開発余地を評価する")
+    return " / ".join(actions) + f"（対象月: {focus}）"
+
+
+def answer_question(question: str, context: str) -> str:
+    """Answer a free-form question using the provided context."""
+
+    pipe = _load_pipeline()
+    if pipe is not None:
+        prompt = (
+            "以下の事業データの要約を参考に、ビジネスアナリストとして質問に答えてください。"
+            f"\nデータ要約:\n{context}\n\n質問:\n{question}\n"
+            "回答は日本語で2~3文にまとめてください。"
+        )
+        return pipe(prompt, max_new_tokens=200)[0]["generated_text"].strip()
+
+    parts = [p.strip() for p in context.split("｜") if p.strip()]
+    lead = parts[0] if parts else "データが不足しています"
+    detail = " / ".join(parts[1:3]) if len(parts) > 1 else ""
+    detail_text = f" {detail}" if detail else ""
+    return f"{lead}{detail_text}。この情報を前提に『{question}』への対応策を検討してください。"
