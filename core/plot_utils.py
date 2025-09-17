@@ -23,9 +23,15 @@ def apply_elegant_theme(fig: go.Figure, theme: str = "dark") -> go.Figure:
                 bordercolor="rgba(255,255,255,.14)",
                 borderwidth=1,
             ),
+            hoverlabel=dict(
+                bgcolor="rgba(28,39,51,0.92)",
+                bordercolor="rgba(233,241,255,0.18)",
+                font=dict(color="#E9F1FF"),
+            ),
         )
         grid = "#2A3240"
         axisline = "rgba(255,255,255,.28)"
+        marker_border = "rgba(233,241,255,0.85)"
     else:
         fig.update_layout(
             template="plotly_white",
@@ -41,15 +47,25 @@ def apply_elegant_theme(fig: go.Figure, theme: str = "dark") -> go.Figure:
                 bordercolor="rgba(11,19,36,.14)",
                 borderwidth=1,
             ),
+            hoverlabel=dict(
+                bgcolor="rgba(255,255,255,0.98)",
+                bordercolor="rgba(11,19,36,0.12)",
+                font=dict(color="#0B1324"),
+            ),
         )
         grid = "rgba(11,19,36,.10)"
         axisline = "rgba(11,19,36,.30)"
+        marker_border = "rgba(11,19,36,0.24)"
     fig.update_xaxes(
         showgrid=True,
         gridcolor=grid,
         linecolor=axisline,
         ticks="outside",
         ticklen=4,
+        tickcolor=axisline,
+        showline=True,
+        linewidth=1,
+        title_standoff=14,
     )
     fig.update_yaxes(
         showgrid=True,
@@ -57,11 +73,14 @@ def apply_elegant_theme(fig: go.Figure, theme: str = "dark") -> go.Figure:
         linecolor=axisline,
         ticks="outside",
         ticklen=4,
+        tickcolor=axisline,
+        showline=True,
+        linewidth=1,
+        title_standoff=16,
     )
-    fig.update_traces(selector=dict(mode="lines"), line=dict(width=2.0))
     fig.update_traces(
         selector=lambda t: "markers" in getattr(t, "mode", ""),
-        marker=dict(size=5, line=dict(width=1, color="white")),
+        marker=dict(size=6, line=dict(width=1.2, color=marker_border)),
     )
     return fig
 
