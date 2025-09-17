@@ -15,7 +15,7 @@ from services import (
 from core.plot_utils import add_latest_labels_no_overlap, apply_elegant_theme
 
 UNIT_SCALE = {"円": 1, "千円": 1_000, "百万円": 1_000_000}
-MAX_DISPLAY_PRODUCTS = 30
+MAX_DISPLAY_PRODUCTS = 60
 
 
 def format_int(val: float | int) -> str:

@@ -1530,7 +1530,7 @@ elif page == "SKU詳細":
             )
     else:
         opts = (prods["product_code"] + " | " + prods["product_name"]).tolist()
-        sel = st.multiselect("SKU選択（最大30件）", options=opts, max_selections=30)
+        sel = st.multiselect("SKU選択（最大60件）", options=opts, max_selections=60)
         codes = [s.split(" | ")[0] for s in sel]
         if codes or (tb.get("slope_conf") and tb["slope_conf"].get("quick") != "なし"):
             build_chart_card(
