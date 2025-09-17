@@ -25,8 +25,10 @@ def format_int(val: float | int) -> str:
         return "0"
 
 
-def int_input(label: str, value: int) -> int:
-    text = st.text_input(label, format_int(value))
+def int_input(label: str, value: int, key: str | None = None) -> int:
+    """Integer input widget that keeps thousands separators."""
+
+    text = st.text_input(label, format_int(value), key=key)
     try:
         return int(text.replace(",", ""))
     except ValueError:
@@ -78,50 +80,84 @@ def _ensure_css():
     st.session_state["_chart_css_injected"] = True
 
 
-def toolbar_sku_detail(multi_mode: bool):
+def toolbar_sku_detail(
+    multi_mode: bool,
+    key_prefix: str = "sku",
+    include_expand_toggle: bool = True,
+):
     _ensure_css()
     ui = st.session_state.setdefault("ui", {})
 
-    a, b, c, d, e = st.columns([1.1, 1.6, 1.1, 1.0, 0.9])
+    def widget_key(name: str) -> str:
+        return f"{key_prefix}_{name}"
+
+    a, b, c, d, e, f = st.columns([1.05, 1.5, 1.05, 0.95, 0.85, 0.9])
     with a:
         period_opts = ["12ヶ月", "24ヶ月", "36ヶ月"]
+        default = ui.get("period", "24ヶ月")
         period = st.radio(
             "期間",
             period_opts,
             horizontal=True,
-            index=period_opts.index(ui.get("period", "24ヶ月")),
+            index=period_opts.index(default) if default in period_opts else 1,
+            key=widget_key("period"),
         )
         ui["period"] = period
     with b:
         node_opts = ["自動", "主要ノードのみ", "すべて", "非表示"]
+        node_default = ui.get("node_mode", "自動")
         node_mode = st.radio(
             "ノード表示",
             node_opts,
             horizontal=True,
-            index=node_opts.index(ui.get("node_mode", "自動")),
+            index=node_opts.index(node_default)
+            if node_default in node_opts
+            else 0,
+            key=widget_key("node_mode"),
         )
         ui["node_mode"] = node_mode
     with c:
         hover_opts = ["個別", "同月まとめ"]
+        hover_default = ui.get("hover_mode", "個別")
         hover_mode = st.radio(
             "ホバー",
             hover_opts,
             horizontal=True,
-            index=hover_opts.index(ui.get("hover_mode", "個別")),
+            index=hover_opts.index(hover_default)
+            if hover_default in hover_opts
+            else 0,
+            key=widget_key("hover_mode"),
         )
         ui["hover_mode"] = hover_mode
     with d:
         op_opts = ["パン", "ズーム", "選択"]
+        op_default = ui.get("op_mode", "パン")
         op_mode = st.radio(
             "操作",
             op_opts,
             horizontal=True,
-            index=op_opts.index(ui.get("op_mode", "パン")),
+            index=op_opts.index(op_default) if op_default in op_opts else 0,
+            key=widget_key("op_mode"),
         )
         ui["op_mode"] = op_mode
     with e:
-        peak_on = st.checkbox("ピーク表示", value=ui.get("peak_on", False))
+        peak_on = st.checkbox(
+            "ピーク表示",
+            value=ui.get("peak_on", False),
+            key=widget_key("peak_on"),
+        )
         ui["peak_on"] = peak_on
+    with f:
+        if include_expand_toggle:
+            expand_mode = st.toggle(
+                "拡大モード",
+                value=ui.get("expand_mode", False),
+                key="sku_expand_mode",
+                help="グラフを拡大しながら同じ操作パネルを操作できます。",
+            )
+            ui["expand_mode"] = expand_mode
+        else:
+            expand_mode = ui.get("expand_mode", False)
 
     f, g, h, i = st.columns([1.0, 1.5, 1.4, 1.4])
     with f:
@@ -131,18 +167,39 @@ def toolbar_sku_detail(multi_mode: bool):
             unit_opts,
             horizontal=True,
             index=unit_opts.index(ui.get("unit", "千円")),
+            key=widget_key("unit"),
         )
         ui["unit"] = unit
     with g:
-        enable_avoid = st.checkbox("ラベル衝突回避", value=ui.get("enable_avoid", True))
+        enable_avoid = st.checkbox(
+            "ラベル衝突回避",
+            value=ui.get("enable_avoid", True),
+            key=widget_key("enable_avoid"),
+        )
         ui["enable_avoid"] = enable_avoid
-        gap_px = st.slider("ラベル最小間隔(px)", 8, 24, ui.get("gap_px", 12))
+        gap_px = st.slider(
+            "ラベル最小間隔(px)",
+            8,
+            24,
+            int(ui.get("gap_px", 12)),
+            key=widget_key("gap_px"),
+        )
         ui["gap_px"] = gap_px
     with h:
-        max_labels = st.slider("ラベル最大件数", 5, 20, ui.get("max_labels", 12))
+        max_labels = st.slider(
+            "ラベル最大件数",
+            5,
+            20,
+            int(ui.get("max_labels", 12)),
+            key=widget_key("max_labels"),
+        )
         ui["max_labels"] = max_labels
     with i:
-        alt_side = st.checkbox("ラベル左右交互配置", value=ui.get("alt_side", True))
+        alt_side = st.checkbox(
+            "ラベル左右交互配置",
+            value=ui.get("alt_side", True),
+            key=widget_key("alt_side"),
+        )
         ui["alt_side"] = alt_side
 
     slope_conf = None
@@ -155,6 +212,7 @@ def toolbar_sku_detail(multi_mode: bool):
                 quick_opts,
                 horizontal=True,
                 index=quick_opts.index(ui.get("quick", "なし")),
+                key=widget_key("quick"),
             )
             ui["quick"] = quick
         with k:
@@ -162,9 +220,10 @@ def toolbar_sku_detail(multi_mode: bool):
                 "傾きウィンドウ（月）",
                 0,
                 12,
-                ui.get("n_win", 6),
+                int(ui.get("n_win", 6)),
                 1,
                 help="0=自動（系列の全期間で判定）",
+                key=widget_key("n_win"),
             )
             ui["n_win"] = n_win
             cmp_opts = ["以上", "未満"]
@@ -173,6 +232,7 @@ def toolbar_sku_detail(multi_mode: bool):
                 cmp_opts,
                 horizontal=True,
                 index=cmp_opts.index(ui.get("cmp_mode", "以上")),
+                key=widget_key("cmp_mode"),
             )
             ui["cmp_mode"] = cmp_mode
         with l:
@@ -182,17 +242,23 @@ def toolbar_sku_detail(multi_mode: bool):
                 thr_opts,
                 horizontal=True,
                 index=thr_opts.index(ui.get("thr_type", "円/月")),
+                key=widget_key("thr_type"),
             )
             ui["thr_type"] = thr_type
         with m:
             if thr_type == "円/月":
-                thr_val = int_input("しきい値", int(ui.get("thr_val", 0)))
+                thr_val = int_input(
+                    "しきい値",
+                    int(ui.get("thr_val", 0)),
+                    key=widget_key("thr_val"),
+                )
             else:
                 thr_val = st.number_input(
                     "しきい値",
                     value=float(ui.get("thr_val", 0.0)),
                     step=0.01,
                     format="%.2f",
+                    key=widget_key("thr_val"),
                 )
             ui["thr_val"] = float(thr_val)
         s1, s2 = st.columns([1.2, 1.2])
@@ -203,10 +269,18 @@ def toolbar_sku_detail(multi_mode: bool):
                 shape_opts,
                 horizontal=True,
                 index=shape_opts.index(ui.get("shape_pick", "（なし）")),
+                key=widget_key("shape_pick"),
             )
             ui["shape_pick"] = shape_pick
         with s2:
-            sens = st.slider("形状抽出の感度", 0.0, 1.0, ui.get("sens", 0.5), 0.05)
+            sens = st.slider(
+                "形状抽出の感度",
+                0.0,
+                1.0,
+                float(ui.get("sens", 0.5)),
+                0.05,
+                key=widget_key("sens"),
+            )
             ui["sens"] = sens
         slope_conf = dict(
             n_win=n_win,
@@ -227,30 +301,65 @@ def toolbar_sku_detail(multi_mode: bool):
             "移動平均±MAD",
         ]
         f_method = st.selectbox(
-            "予測帯", method_opts, index=method_opts.index(ui.get("f_method", "なし"))
+            "予測帯",
+            method_opts,
+            index=method_opts.index(ui.get("f_method", "なし")),
+            key=widget_key("f_method"),
         )
         ui["f_method"] = f_method
     with p2:
         f_win = st.selectbox(
-            "学習窓幅", [6, 9, 12], index=[6, 9, 12].index(ui.get("f_win", 12))
+            "学習窓幅",
+            [6, 9, 12],
+            index=[6, 9, 12].index(ui.get("f_win", 12)),
+            key=widget_key("f_win"),
         )
         ui["f_win"] = f_win
     with p3:
         f_h = st.selectbox(
-            "先の予測ステップ", [3, 6, 12], index=[3, 6, 12].index(ui.get("f_h", 6))
+            "先の予測ステップ",
+            [3, 6, 12],
+            index=[3, 6, 12].index(ui.get("f_h", 6)),
+            key=widget_key("f_h"),
         )
         ui["f_h"] = f_h
     with p4:
-        f_k = st.slider("バンド幅k", 1.5, 3.0, ui.get("f_k", 2.0), 0.1)
+        f_k = st.slider(
+            "バンド幅k",
+            1.5,
+            3.0,
+            float(ui.get("f_k", 2.0)),
+            0.1,
+            key=widget_key("f_k"),
+        )
         ui["f_k"] = f_k
     with p5:
-        f_robust = st.checkbox("ロバスト(MAD)", value=ui.get("f_robust", False))
+        f_robust = st.checkbox(
+            "ロバスト(MAD)",
+            value=ui.get("f_robust", False),
+            key=widget_key("f_robust"),
+        )
         ui["f_robust"] = f_robust
     anom_opts = ["OFF", "z≥2.5", "MAD≥3.5"]
     anomaly = st.selectbox(
-        "異常検知", anom_opts, index=anom_opts.index(ui.get("anomaly", "OFF"))
+        "異常検知",
+        anom_opts,
+        index=anom_opts.index(ui.get("anomaly", "OFF")),
+        key=widget_key("anomaly"),
     )
     ui["anomaly"] = anomaly
+    if not include_expand_toggle and expand_mode:
+        chart_height = st.slider(
+            "チャート高さ(px)",
+            600,
+            900,
+            int(ui.get("chart_height", 760)),
+            step=20,
+            key=widget_key("chart_height"),
+        )
+        ui["chart_height"] = chart_height
+    else:
+        ui.setdefault("chart_height", 600)
     st.session_state["ui"] = ui
     return dict(
         period=period,
@@ -270,10 +379,21 @@ def toolbar_sku_detail(multi_mode: bool):
         forecast_k=ui.get("f_k", 2.0),
         forecast_robust=ui.get("f_robust", False),
         anomaly=ui.get("anomaly", "OFF"),
+        expand_mode=expand_mode,
+        chart_height=int(ui.get("chart_height", 600)),
     )
 
 
-def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None):
+def build_chart_card(
+    df_long,
+    selected_codes,
+    multi_mode,
+    tb,
+    band_range=None,
+    *,
+    height: int | None = None,
+    config: dict | None = None,
+):
     months = {"12ヶ月": 12, "24ヶ月": 24, "36ヶ月": 36}[tb["period"]]
     dfp = df_long.sort_values("month").groupby("product_code").tail(months)
     if selected_codes:
@@ -490,10 +610,18 @@ def build_chart_card(df_long, selected_codes, multi_mode, tb, band_range=None):
         )
 
     fig = apply_elegant_theme(fig, theme=st.session_state.get("ui_theme", "dark"))
+    plot_height = height or int(tb.get("chart_height", 600))
+    base_config = {
+        "displaylogo": False,
+        "scrollZoom": True,
+        "doubleClick": "reset",
+    }
+    if config:
+        base_config.update(config)
     st.plotly_chart(
         fig,
         use_container_width=True,
-        height=600,
-        config={"displaylogo": False, "scrollZoom": True, "doubleClick": "reset"},
+        height=plot_height,
+        config=base_config,
     )
     return fig

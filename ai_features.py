@@ -12,6 +12,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Dict, Optional
 
+import numpy as np
 import pandas as pd
 
 
@@ -51,13 +52,33 @@ def summarize_dataframe(df: pd.DataFrame) -> str:
     pipe = _load_pipeline()
     if pipe is not None:
         prompt = (
-            "以下の統計量からデータの概要を日本語で2文以内に要約してください:\n" + stats
+            "以下の統計量からビジネス観点のハイライトを3点以内で箇条書きしてください。"
+            "各行は短いセンテンスでまとめ、重要な指標名と方向性を含めてください。\n"
+            + stats
         )
         result = pipe(prompt, max_new_tokens=120)[0]["generated_text"].strip()
         return result
     # Fallback summarisation
-    lines = [line.strip() for line in stats.splitlines() if line.strip()]
-    return f"行数{len(df)}・列数{len(df.columns)}。" + " ".join(lines[:2])
+    lines = [f"行数{len(df)}・列数{len(df.columns)}。"]
+    numeric = df.select_dtypes(include=[np.number]).copy()
+    if not numeric.empty:
+        means = numeric.mean().sort_values(ascending=False)
+        top_metric = means.index[0]
+        lines.append(f"平均が最も高い指標は{top_metric}（{means.iloc[0]:.2f}）。")
+        if len(means) > 1:
+            second = means.index[1]
+            lines.append(f"次点は{second}（{means.iloc[1]:.2f}）。")
+        if "yoy" in numeric.columns:
+            yoy_pos = numeric["yoy"].gt(0).mean()
+            lines.append(f"YoYプラスの比率は{yoy_pos * 100:.1f}%です。")
+        if "delta" in numeric.columns:
+            delta_avg = numeric["delta"].mean()
+            trend = "増加" if delta_avg >= 0 else "減少"
+            lines.append(f"Δの平均は{delta_avg:,.0f}で{trend}基調です。")
+    else:
+        sample = [line.strip() for line in stats.splitlines() if line.strip()][:2]
+        lines.extend(sample)
+    return " ".join(lines[:4])
 
 
 def generate_comment(topic: str) -> str:
@@ -138,3 +159,59 @@ def answer_question(question: str, context: str) -> str:
     detail = " / ".join(parts[1:3]) if len(parts) > 1 else ""
     detail_text = f" {detail}" if detail else ""
     return f"{lead}{detail_text}。この情報を前提に『{question}』への対応策を検討してください。"
+
+
+def generate_anomaly_brief(anomalies: pd.DataFrame, top_n: int = 5) -> str:
+    """Summarise anomaly detections highlighting notable cases."""
+
+    if anomalies is None or anomalies.empty:
+        return "異常値は検出されませんでした。"
+
+    subset = anomalies.copy()
+    if "score" in subset.columns:
+        subset["score_abs"] = subset["score"].abs()
+        subset = subset.sort_values("score_abs", ascending=False)
+    else:
+        subset["score_abs"] = 0.0
+    subset = subset.head(top_n)
+
+    pipe = _load_pipeline()
+    if pipe is not None:
+        bullet = []
+        for _, row in subset.iterrows():
+            name = row.get("product_name") or row.get("product_code") or "不明SKU"
+            month = row.get("month", "-")
+            score = row.get("score", 0.0)
+            yoy = row.get("yoy")
+            delta = row.get("delta")
+            yoy_txt = f"YoY {yoy * 100:.1f}%" if yoy is not None and not pd.isna(yoy) else "YoY情報なし"
+            delta_txt = (
+                f"Δ {delta:,.0f}" if delta is not None and not pd.isna(delta) else "Δ情報なし"
+            )
+            bullet.append(f"商品:{name} 月:{month} スコア:{score:.2f} {yoy_txt} {delta_txt}")
+        prompt = (
+            "以下の異常検知結果について、重要ポイントをビジネス視点で箇条書きしてください。"
+            "全体傾向と注目SKUを含め、3行以内でまとめてください。\n" + "\n".join(bullet)
+        )
+        return pipe(prompt, max_new_tokens=150)[0]["generated_text"].strip()
+
+    total = len(anomalies)
+    pos = int((anomalies.get("score", pd.Series(dtype=float)) > 0).sum())
+    neg = total - pos
+    parts = [f"異常値{total}件（上振れ{pos}件・下振れ{neg}件）。"]
+    highlights = []
+    for _, row in subset.iterrows():
+        name = row.get("product_name") or row.get("product_code") or "不明SKU"
+        month = row.get("month", "-")
+        score = row.get("score")
+        yoy = row.get("yoy")
+        delta = row.get("delta")
+        detail = [f"スコア{score:.2f}" if score is not None and not pd.isna(score) else "スコア情報なし"]
+        if yoy is not None and not pd.isna(yoy):
+            detail.append(f"YoY {yoy * 100:.1f}%")
+        if delta is not None and not pd.isna(delta):
+            detail.append(f"Δ {delta:,.0f}")
+        highlights.append(f"{name}（{month}）: " + " / ".join(detail))
+    if highlights:
+        parts.append("注目SKU: " + "; ".join(highlights))
+    return " ".join(parts)
